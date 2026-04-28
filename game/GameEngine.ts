@@ -217,8 +217,7 @@ export class GameEngine {
       dt,
       Math.cos(this.player.facingAngle),
       Math.sin(this.player.facingAngle),
-      this.player.isMoving,
-      this.player.facingAngle,
+      this.player.isMoving
     );
 
     this.updateDetection(dt);

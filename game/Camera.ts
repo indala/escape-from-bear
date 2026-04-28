@@ -9,9 +9,6 @@ export class Camera {
   // Mobile/Rotation state
   public isMobile: boolean = false;
   public currentRotation: number = 0;
-  private targetX: number = 0;
-  private targetY: number = 0;
-
   // Screen shake
   private shakeIntensity: number = 0;
   private shakeDuration:  number = 0;
@@ -59,12 +56,8 @@ export class Camera {
     dt: number,
     velX: number = 0,
     velY: number = 0,
-    isMoving: boolean = false,
-    facingAngle: number = 0
+    isMoving: boolean = false
   ) {
-    this.targetX = targetX;
-    this.targetY = targetY;
-
     // We no longer rotate the map on mobile to prevent motion sickness and improve UX
     this.currentRotation = 0;
 
