@@ -65,54 +65,43 @@ export class Camera {
     this.targetX = targetX;
     this.targetY = targetY;
 
-    if (this.isMobile) {
-      // ── MOBILE: Centered & Rotating ─────────────────────────────────────────
-      // We want the player facing UP (-Math.PI/2).
-      // Map rotation = -facingAngle - Math.PI/2
-      const targetRot = -facingAngle - Math.PI / 2;
-      
-      // Smoothly interpolate rotation to prevent motion sickness
-      let diff = targetRot - this.currentRotation;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-      while (diff >  Math.PI) diff -= Math.PI * 2;
-      
-      this.currentRotation += diff * Math.min(1, 4.5 * dt);
-      
-      // Look-ahead is disabled or minimized on mobile to keep player centered
-      this.lookAheadX = 0;
-      this.lookAheadY = 0;
-      
-      // For mobile, x and y are the "centered" camera pos
-      this.x = targetX - this.width / 2;
-      this.y = targetY - this.height / 2;
-    } else {
-      // ── DESKTOP: Traditional deadzone ───────────────────────────────────────
-      this.currentRotation = 0;
-      const targetLookX = isMoving ? velX * this.LOOK_AHEAD_DIST : 0;
-      const targetLookY = isMoving ? velY * this.LOOK_AHEAD_DIST : 0;
+    // We no longer rotate the map on mobile to prevent motion sickness and improve UX
+    this.currentRotation = 0;
 
-      this.lookAheadX += (targetLookX - this.lookAheadX) * Math.min(1, this.LOOK_AHEAD_SPEED * dt);
-      this.lookAheadY += (targetLookY - this.lookAheadY) * Math.min(1, this.LOOK_AHEAD_SPEED * dt);
+    // Mobile specific overrides for camera feel:
+    // - No look-ahead to keep player more centered on small screens
+    // - No deadzone for more immediate tracking
+    const lookAheadDist = this.isMobile ? 0 : this.LOOK_AHEAD_DIST;
+    const deadzoneX     = this.isMobile ? 0 : this.DEADZONE_X;
+    const deadzoneY     = this.isMobile ? 0 : this.DEADZONE_Y;
 
-      const desiredX = targetX + this.lookAheadX - this.width  / 2;
-      const desiredY = targetY + this.lookAheadY - this.height / 2;
+    // 1. Calculate Look-ahead (smoothly offset toward movement direction)
+    const targetLookX = isMoving ? velX * lookAheadDist : 0;
+    const targetLookY = isMoving ? velY * lookAheadDist : 0;
 
-      const diffX = desiredX - this.x;
-      const diffY = desiredY - this.y;
+    this.lookAheadX += (targetLookX - this.lookAheadX) * Math.min(1, this.LOOK_AHEAD_SPEED * dt);
+    this.lookAheadY += (targetLookY - this.lookAheadY) * Math.min(1, this.LOOK_AHEAD_SPEED * dt);
 
-      if (Math.abs(diffX) > this.DEADZONE_X) {
-        const speedX = Math.min(4 + (Math.abs(diffX) - this.DEADZONE_X) * 0.05, 14);
-        this.x += diffX * Math.min(1, speedX * dt);
-      }
-      if (Math.abs(diffY) > this.DEADZONE_Y) {
-        const speedY = Math.min(4 + (Math.abs(diffY) - this.DEADZONE_Y) * 0.05, 14);
-        this.y += diffY * Math.min(1, speedY * dt);
-      }
+    // 2. Determine desired camera position (top-left)
+    const desiredX = targetX + this.lookAheadX - this.width  / 2;
+    const desiredY = targetY + this.lookAheadY - this.height / 2;
 
-      // Clamp to map bounds (Desktop only)
-      this.x = Math.max(0, Math.min(MAP_WIDTH  - this.width,  this.x));
-      this.y = Math.max(0, Math.min(MAP_HEIGHT - this.height, this.y));
+    // 3. Apply Deadzone and Smoothing
+    const diffX = desiredX - this.x;
+    const diffY = desiredY - this.y;
+
+    if (Math.abs(diffX) > deadzoneX) {
+      const speedX = Math.min(4 + (Math.abs(diffX) - deadzoneX) * 0.05, 14);
+      this.x += diffX * Math.min(1, speedX * dt);
     }
+    if (Math.abs(diffY) > deadzoneY) {
+      const speedY = Math.min(4 + (Math.abs(diffY) - deadzoneY) * 0.05, 14);
+      this.y += diffY * Math.min(1, speedY * dt);
+    }
+
+    // 4. Clamp to map bounds for all platforms
+    this.x = Math.max(0, Math.min(MAP_WIDTH  - this.width,  this.x));
+    this.y = Math.max(0, Math.min(MAP_HEIGHT - this.height, this.y));
 
     // ── Screen shake ──────────────────────────────────────────────────────────
     if (this.shakeDuration > 0) {
@@ -127,28 +116,23 @@ export class Camera {
   }
 
   apply(ctx: CanvasRenderingContext2D) {
-    // 1. Move to screen center
+    // 1. Move to screen center with shake offset
     ctx.translate(this.width / 2 + this.shakeOffsetX, this.height / 2 + this.shakeOffsetY);
     
-    // 2. Rotate if on mobile
-    if (this.isMobile && this.currentRotation !== 0) {
+    // 2. Rotate (if any)
+    if (this.currentRotation !== 0) {
       ctx.rotate(this.currentRotation);
     }
     
-    // 3. Move back to world position
-    if (this.isMobile) {
-      ctx.translate(-this.targetX, -this.targetY);
-    } else {
-      ctx.translate(-(this.x + this.width / 2), -(this.y + this.height / 2));
-    }
+    // 3. Move to world position (centering on the camera's current world center)
+    ctx.translate(-(this.x + this.width / 2), -(this.y + this.height / 2));
   }
 
   toScreen(worldX: number, worldY: number): { x: number; y: number } {
-    let dx, dy;
-    
-    if (this.isMobile) {
-      dx = worldX - this.targetX;
-      dy = worldY - this.targetY;
+    // If we have rotation, we need to apply it manually for coordinate conversion
+    if (this.currentRotation !== 0) {
+      const dx = worldX - (this.x + this.width / 2);
+      const dy = worldY - (this.y + this.height / 2);
       
       const cos = Math.cos(this.currentRotation);
       const sin = Math.sin(this.currentRotation);
@@ -160,11 +144,13 @@ export class Camera {
         x: rx + this.width / 2 + this.shakeOffsetX,
         y: ry + this.height / 2 + this.shakeOffsetY
       };
-    } else {
-      return {
-        x: worldX - Math.round(this.x + this.shakeOffsetX),
-        y: worldY - Math.round(this.y + this.shakeOffsetY),
-      };
     }
+
+    // Default non-rotating screen conversion
+    return {
+      x: worldX - Math.round(this.x + this.shakeOffsetX),
+      y: worldY - Math.round(this.y + this.shakeOffsetY),
+    };
   }
 }
+
