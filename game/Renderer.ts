@@ -211,8 +211,8 @@ export class Renderer {
 
     // Ambient light around player (increases with items)
     const itemsCollected = engine.items.filter(i => i.collected).length;
-    const ambientBase   = 100;
-    const ambientBonus  = itemsCollected * 18;
+    const ambientBase   = 130;
+    const ambientBonus  = itemsCollected * 20;
     const ambientRadius = ambientBase + ambientBonus;
 
     const ambient = lctx.createRadialGradient(ps.x, ps.y, 2, ps.x, ps.y, ambientRadius);
@@ -227,10 +227,10 @@ export class Renderer {
     // Directional flashlight cone (increases with items)
     if (isFlashlightOn) {
       const angle = player.facingAngle;
-      const coneAngle = Math.PI / 3.2; 
+      const coneAngle = Math.PI / 2.5; 
       
-      const coneBase   = 300;
-      const coneBonus  = itemsCollected * 55;
+      const coneBase   = 450;
+      const coneBonus  = itemsCollected * 60;
       const coneLength = coneBase + coneBonus;
 
       const flashGrad = lctx.createRadialGradient(ps.x, ps.y, 20, ps.x, ps.y, coneLength);

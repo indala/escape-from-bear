@@ -92,9 +92,11 @@ export class Camera {
       this.y += diffY * Math.min(1, speedY * dt);
     }
 
-    // 4. Clamp to map bounds for all platforms
-    this.x = Math.max(0, Math.min(MAP_WIDTH  - this.width,  this.x));
-    this.y = Math.max(0, Math.min(MAP_HEIGHT - this.height, this.y));
+    // 4. Clamp to map bounds (Desktop only - mobile stays centered even at edges)
+    if (!this.isMobile) {
+      this.x = Math.max(0, Math.min(MAP_WIDTH  - this.width,  this.x));
+      this.y = Math.max(0, Math.min(MAP_HEIGHT - this.height, this.y));
+    }
 
     // ── Screen shake ──────────────────────────────────────────────────────────
     if (this.shakeDuration > 0) {

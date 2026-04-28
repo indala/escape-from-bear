@@ -311,8 +311,8 @@ export class GameEngine {
       while (diff > Math.PI)  diff -= Math.PI * 2;
 
       const itemsCollected = this.items.filter(i => i.collected).length;
-      const coneLength = 280 + (itemsCollected * 50);
-      const coneAngle  = Math.PI / 3.5;
+      const coneLength = 420 + (itemsCollected * 55);
+      const coneAngle  = Math.PI / 2.8;
 
       if (dist < coneLength && Math.abs(diff) < coneAngle / 2) {
         // Flashlight hit the bear!
