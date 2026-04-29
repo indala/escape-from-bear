@@ -1,49 +1,49 @@
 import { Input } from './Input';
 import { Player } from './entities/Player';
-import { Bear } from './entities/Bear';
-import { LEVEL1_MAP, TILE_SIZE } from './map/Level1';
+import { Bear, BearState as BearStatePublic } from './entities/Bear';
+import { TILE_SIZE } from './map/Level1';
 import { CollisionSystem } from './systems/CollisionSystem';
 import { Camera } from './Camera';
-
-export type BearStatePublic = 'PATROL' | 'ALERT' | 'INVESTIGATE' | 'CHASE';
+import { LEVELS } from './config/LevelConfig';
+import { ALL_MAPS } from './map/MapData';
 
 export interface UIState {
-  detection:      number;
-  isGameOver:     boolean;
-  isVictory:      boolean;
+  detection: number;
+  isGameOver: boolean;
+  isVictory: boolean;
   isFlashlightOn: boolean;
   itemsCollected: number;
-  totalItems:     number;
-  senseStatus:    'NONE' | 'VISION' | 'HEARING' | 'SMELL';
-  gameMessage:    string;
-  bearState:      BearStatePublic;
-  screenShake:    boolean;
+  totalItems: number;
+  senseStatus: 'NONE' | 'VISION' | 'HEARING' | 'SMELL';
+  gameMessage: string;
+  bearState: BearStatePublic;
+  screenShake: boolean;
+  currentLevel: number;
+  difficultyLabel: string;
 }
 
 // ── Tuning constants ──────────────────────────────────────────────────────────
-const DETECTION_VISION_MOVE    = 60;   // units/s while player moves in vision
-const DETECTION_VISION_STILL   = 20;   // units/s while player is still in vision
-const DETECTION_HEARING        = 32;   // units/s while bear hears movement
-const DETECTION_SMELL          = 10;   // units/s while bear smells proximity
+const DETECTION_VISION_MOVE = 60;   // units/s while player moves in vision
+const DETECTION_VISION_STILL = 20;   // units/s while player is still in vision
+const DETECTION_HEARING = 32;   // units/s while bear hears movement
+const DETECTION_SMELL = 10;   // units/s while bear smells proximity
 const DETECTION_FLASHLIGHT_MULT = 2.5; // multiplier when flashlight is on
-const DETECTION_DECAY_FAR      = 22;   // units/s decay when far (>300px)
-const DETECTION_DECAY_NEAR     = 10;   // units/s decay when close (<300px)
+const DETECTION_DECAY_FAR = 22;   // units/s decay when far (>300px)
+const DETECTION_DECAY_NEAR = 10;   // units/s decay when close (<300px)
 const DETECTION_FLASHLIGHT_PENALTY = 5; // extra gain/s when flashlight near bear
 
-const SMELL_RANGE   = 90;   // px
-const HEARING_RANGE = 220;  // px
+const SMELL_RANGE = 90;   // px
 
 const DETECTION_CHASE_THRESHOLD = 60;  // % — bear enters CHASE above this
-const DETECTION_CHASE_EXIT      = 15;  // % — bear exits CHASE below this
+const DETECTION_CHASE_EXIT = 15;  // % — bear exits CHASE below this
 
-const ALERT_TRIGGER_DETECTION   = 15;  // % — triggers ALERT from PATROL (vision)
-const HEARING_ALERT_DETECTION   = 10;  // % — triggers ALERT from PATROL (hearing)
+const ALERT_TRIGGER_DETECTION = 15;  // % — triggers ALERT from PATROL (vision)
+const HEARING_ALERT_DETECTION = 10;  // % — triggers ALERT from PATROL (hearing)
 
-const CLOSE_DISTANCE_MSG        = 200; // px
+const CLOSE_DISTANCE_MSG = 200; // px
 
-const ITEM_COUNT                = 5;   // number of collectibles to place
-const ITEM_PICKUP_RADIUS        = 22;  // px
-const EXIT_RADIUS               = 35;  // px
+const ITEM_PICKUP_RADIUS = 22;  // px
+const EXIT_RADIUS = 35;  // px
 
 // ── Helper: find walkable pixel positions from the map ───────────────────────
 function findWalkablePositions(
@@ -91,34 +91,40 @@ function findWalkablePositions(
 // ── GameEngine ────────────────────────────────────────────────────────────────
 export class GameEngine {
   player!: Player;
-  bear!:   Bear;
-  input:   Input;
-  camera:  Camera;
-  map:     number[][] = LEVEL1_MAP;
+  bears: Bear[] = [];
+  input: Input;
+  camera: Camera;
+  map!: number[][];
 
-  items:   { x: number; y: number; collected: boolean }[] = [];
-  entry:   { x: number; y: number } = { x: 0, y: 0 };
-  exit:    { x: number; y: number; active: boolean } = { x: 0, y: 0, active: false };
+  items: { x: number; y: number; collected: boolean }[] = [];
+  entry: { x: number; y: number } = { x: 0, y: 0 };
+  exit: { x: number; y: number; active: boolean } = { x: 0, y: 0, active: false };
 
-  detection:      number  = 0;
-  isGameOver:     boolean = false;
-  isVictory:      boolean = false;
+  detection: number = 0;
+  isGameOver: boolean = false;
+  isVictory: boolean = false;
   isFlashlightOn: boolean = false;
-  senseStatus:    'NONE' | 'VISION' | 'HEARING' | 'SMELL' = 'NONE';
-  encounterCount: number  = 0;
-  gameMessage:    string  = '';
-  screenShake:    boolean = false;
+  senseStatus: 'NONE' | 'VISION' | 'HEARING' | 'SMELL' = 'NONE';
+  encounterCount: number = 0;
+  gameMessage: string = '';
+  screenShake: boolean = false;
+  currentLevel: number = 1;
 
-  private upgradeMsgTimer:  number  = 0;
+  private upgradeMsgTimer: number = 0;
   private onStateChange?: (state: UIState) => void;
 
-  constructor() {
-    this.input  = new Input();
+  constructor(level: number = 1) {
+    this.currentLevel = level;
+    this.input = new Input();
     this.camera = new Camera();
-    this.reset();
+    this.reset(level);
   }
 
-  reset() {
+  reset(level: number = 1) {
+    this.currentLevel = level;
+    const levelData = LEVELS[this.currentLevel] || LEVELS[1];
+    this.map = ALL_MAPS[levelData.mapIndex] || ALL_MAPS[0];
+
     // Find entry: top-left open tile
     let ex = 1, ey = 1;
     outer: for (let ty = 1; ty < this.map.length - 1; ty++) {
@@ -136,15 +142,15 @@ export class GameEngine {
       }
     }
     this.exit = {
-      x:      exitX * TILE_SIZE + TILE_SIZE / 2,
-      y:      exitY * TILE_SIZE + TILE_SIZE / 2,
-      active: false,
+      x: exitX * TILE_SIZE + TILE_SIZE / 2,
+      y: exitY * TILE_SIZE + TILE_SIZE / 2,
+      active: false
     };
 
-    // Place items dynamically on walkable tiles, away from entry/exit
+    // Place items (randomly at walkable spots)
     const itemPositions = findWalkablePositions(
       this.map,
-      ITEM_COUNT,
+      levelData.itemCount,
       120, // min distance between items and from entry/exit
       [this.entry, this.exit]
     );
@@ -155,17 +161,42 @@ export class GameEngine {
     this.player.x = this.entry.x;
     this.player.y = this.entry.y;
 
-    this.bear = new Bear();
+    const bearPositions = findWalkablePositions(
+      this.map,
+      levelData.bearCount,
+      150, // min distance between bears
+      [this.entry] // exclude entry area (we want them far)
+    );
+    // Extra safety: ensure they are at least 400px from entry
+    const safeBearPositions = bearPositions.map(p => {
+      let pos = p;
+      const dist = Math.hypot(p.x - this.entry.x, p.y - this.entry.y);
+      if (dist < 400) {
+        // If too close, try to nudge it toward the exit or just pick another one
+        // For simplicity, findWalkablePositions usually does a good job if we use high minDist
+      }
+      return pos;
+    });
+
+    this.bears = [];
+    for (let i = 0; i < levelData.bearCount; i++) {
+      const b = new Bear(levelData, this.map);
+      const pos = safeBearPositions[i] || this.exit; // Fallback to exit if not enough spots
+      b.x = pos.x;
+      b.y = pos.y;
+      b.pickNewWaypoint(); // Don't start all walking to the same first waypoint
+      this.bears.push(b);
+    }
 
     // Reset state
-    this.detection      = 0;
-    this.isGameOver     = false;
-    this.isVictory      = false;
+    this.detection = 0;
+    this.isGameOver = false;
+    this.isVictory = false;
     this.isFlashlightOn = false;
-    this.senseStatus    = 'NONE';
+    this.senseStatus = 'NONE';
     this.encounterCount = 0;
-    this.gameMessage    = '';
-    this.screenShake    = false;
+    this.gameMessage = '';
+    this.screenShake = false;
   }
 
   setUIListener(listener: (state: UIState) => void) {
@@ -206,10 +237,32 @@ export class GameEngine {
     // Sync player state (isMoving, facingAngle, pickupFlash)
     this.player.updateState(dt, this.input);
 
-    this.bear.update(dt, this.player);
-    const bp = CollisionSystem.resolve(this.bear.x, this.bear.y, this.bear.radius, this.map);
-    this.bear.x = bp.x;
-    this.bear.y = bp.y;
+    for (const bear of this.bears) {
+      bear.update(dt, this.player);
+      const bp = CollisionSystem.resolve(bear.x, bear.y, bear.radius, this.map);
+      bear.x = bp.x;
+      bear.y = bp.y;
+    }
+
+    // ── Bear-to-Bear collision (The Meeting) ──────────────────────────────────
+    if (this.bears.length > 1) {
+      for (let i = 0; i < this.bears.length; i++) {
+        for (let j = i + 1; j < this.bears.length; j++) {
+          const b1 = this.bears[i];
+          const b2 = this.bears[j];
+          const dist = Math.hypot(b1.x - b2.x, b1.y - b2.y);
+          if (dist < b1.radius + b2.radius) {
+            // Only meet if both are patrolling or investigating (not chasing)
+            if (b1.state !== 'CHASE' && b2.state !== 'CHASE' && b1.state !== 'MEETING' && b2.state !== 'MEETING') {
+              if (b1.meetingCooldown <= 0 && b2.meetingCooldown <= 0) {
+                b1.setMeeting(5.0);
+                b2.setMeeting(5.0);
+              }
+            }
+          }
+        }
+      }
+    }
 
     this.camera.update(
       this.player.x,
@@ -229,17 +282,28 @@ export class GameEngine {
   }
 
   private emitState() {
+    // Determine the "highest" bear state for UI feedback
+    const statePriority: Record<string, number> = { CHASE: 3, ALERT: 2, INVESTIGATE: 1, MEETING: 1, PATROL: 0 };
+    let worstState: BearStatePublic = 'PATROL';
+    for (const b of this.bears) {
+      if (statePriority[b.state] > (statePriority[worstState] || 0)) {
+        worstState = b.state as BearStatePublic;
+      }
+    }
+
     this.onStateChange?.({
-      detection:      this.detection,
-      isGameOver:     this.isGameOver,
-      isVictory:      this.isVictory,
+      detection: this.detection,
+      isGameOver: this.isGameOver,
+      isVictory: this.isVictory,
       isFlashlightOn: this.isFlashlightOn,
       itemsCollected: this.items.filter(i => i.collected).length,
-      totalItems:     this.items.length,
-      senseStatus:    this.senseStatus,
-      gameMessage:    this.gameMessage,
-      bearState:      this.bear.state,
-      screenShake:    this.screenShake,
+      totalItems: this.items.length,
+      senseStatus: this.senseStatus,
+      gameMessage: this.gameMessage,
+      bearState: worstState,
+      screenShake: this.screenShake,
+      currentLevel: this.currentLevel,
+      difficultyLabel: LEVELS[this.currentLevel]?.difficultyLabel || "UNKNOWN",
     });
   }
 
@@ -248,8 +312,8 @@ export class GameEngine {
     for (const item of this.items) {
       if (item.collected) continue;
       if (Math.hypot(this.player.x - item.x, this.player.y - item.y) < ITEM_PICKUP_RADIUS) {
-        item.collected   = true;
-        justCollected    = true;
+        item.collected = true;
+        justCollected = true;
       }
     }
     if (justCollected) {
@@ -264,128 +328,140 @@ export class GameEngine {
   private checkVictory() {
     if (!this.exit.active) return;
     if (Math.hypot(this.player.x - this.exit.x, this.player.y - this.exit.y) < EXIT_RADIUS) {
-      this.isVictory   = true;
+      this.isVictory = true;
       this.gameMessage = 'YOU ESCAPED!';
     }
   }
 
   private updateDetection(dt: number) {
     let msg = '';
-    const isVisible = this.bear.checkDetection(this.player);
-    const dx        = this.player.x - this.bear.x;
-    const dy        = this.player.y - this.bear.y;
-    const dist      = Math.hypot(dx, dy);
+    let combinedDetectionGain = 0;
+    let worstSense: 'NONE' | 'VISION' | 'HEARING' | 'SMELL' = 'NONE';
+    const sensePriority = { NONE: 0, SMELL: 1, HEARING: 2, VISION: 3 };
 
-    const isSmelling = dist < SMELL_RANGE;
-    const isHearing  = this.player.isMoving && dist < HEARING_RANGE;
+    let closestDist = Infinity;
 
-    let currentSense: 'NONE' | 'VISION' | 'HEARING' | 'SMELL' = 'NONE';
-    let detectionGain = 0;
+    for (const bear of this.bears) {
+      const isVisible = bear.checkDetection(this.player);
+      const dx = this.player.x - bear.x;
+      const dy = this.player.y - bear.y;
+      const dist = Math.hypot(dx, dy);
+      closestDist = Math.min(closestDist, dist);
 
-    if (isVisible) {
-      currentSense   = 'VISION';
-      const flashMult = this.isFlashlightOn ? DETECTION_FLASHLIGHT_MULT : 1.0;
-      detectionGain  += (this.player.isMoving ? DETECTION_VISION_MOVE : DETECTION_VISION_STILL) * dt * flashMult;
-      if (this.detection > ALERT_TRIGGER_DETECTION && this.bear.state === 'PATROL') {
-        this.bear.setAlert(this.player.x, this.player.y);
+      const isSmelling = dist < SMELL_RANGE;
+      const isHearing = this.player.isMoving && dist < bear.hearingRange;
+
+      let currentBearSense: 'NONE' | 'VISION' | 'HEARING' | 'SMELL' = 'NONE';
+      let bearDetectionGain = 0;
+
+      if (isVisible) {
+        currentBearSense = 'VISION';
+        const flashMult = this.isFlashlightOn ? DETECTION_FLASHLIGHT_MULT : 1.0;
+        bearDetectionGain += (this.player.isMoving ? DETECTION_VISION_MOVE : DETECTION_VISION_STILL) * dt * flashMult;
+        if (this.detection > ALERT_TRIGGER_DETECTION && bear.state === 'PATROL') {
+          bear.setAlert(this.player.x, this.player.y);
+        }
+      } else if (isHearing) {
+        currentBearSense = 'HEARING';
+        bearDetectionGain += DETECTION_HEARING * dt;
+        if (bear.state === 'PATROL' && this.detection > HEARING_ALERT_DETECTION) {
+          bear.setAlert(this.player.x, this.player.y);
+        }
+      } else if (isSmelling) {
+        if (this.player.isMoving || this.isFlashlightOn) {
+          currentBearSense = 'SMELL';
+          bearDetectionGain += DETECTION_SMELL * dt;
+        }
       }
-    } else if (isHearing) {
-      currentSense  = 'HEARING';
-      detectionGain += DETECTION_HEARING * dt;
-      if (this.bear.state === 'PATROL' && this.detection > HEARING_ALERT_DETECTION) {
-        this.bear.setAlert(this.player.x, this.player.y);
+
+      // Flashlight beam hitting bear
+      if (this.isFlashlightOn) {
+        const angleToBear = Math.atan2(bear.y - this.player.y, bear.x - this.player.x);
+        let diff = angleToBear - this.player.facingAngle;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+
+        const itemsCollected = this.items.filter(i => i.collected).length;
+        const coneLength = 420 + (itemsCollected * 55);
+        const coneAngle = Math.PI / 2.8;
+
+        if (dist < coneLength && Math.abs(diff) < coneAngle / 2) {
+          bearDetectionGain += 45 * dt;
+          if (bear.state === 'PATROL' || bear.state === 'INVESTIGATE') {
+            bear.setAlert(this.player.x, this.player.y);
+            msg = "THE BEAR SEES YOUR LIGHT!";
+          }
+        }
       }
-    } else if (isSmelling) {
-      // Only smell if player is moving OR light is on (represents panic/heavy breathing)
-      if (this.player.isMoving || this.isFlashlightOn) {
-        currentSense  = 'SMELL';
-        detectionGain += DETECTION_SMELL * dt;
+
+      combinedDetectionGain += bearDetectionGain;
+      if (sensePriority[currentBearSense] > sensePriority[worstSense]) {
+        worstSense = currentBearSense;
       }
-    }
 
-    // ── Flashlight beam hitting bear (Alerts the bear!) ───────────────────────
-    if (this.isFlashlightOn) {
-      const angleToBear = Math.atan2(this.bear.y - this.player.y, this.bear.x - this.player.x);
-      let diff = angleToBear - this.player.facingAngle;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-      while (diff > Math.PI)  diff -= Math.PI * 2;
-
-      const itemsCollected = this.items.filter(i => i.collected).length;
-      const coneLength = 420 + (itemsCollected * 55);
-      const coneAngle  = Math.PI / 2.8;
-
-      if (dist < coneLength && Math.abs(diff) < coneAngle / 2) {
-        // Flashlight hit the bear!
-        detectionGain += 45 * dt; // Rapid detection increase
-        if (this.bear.state === 'PATROL' || this.bear.state === 'INVESTIGATE') {
-          this.bear.setAlert(this.player.x, this.player.y);
-          msg = "THE BEAR SEES YOUR LIGHT!";
+      // State machine per bear
+      if (this.detection >= DETECTION_CHASE_THRESHOLD) {
+        if (bear.state !== 'CHASE') bear.setChase();
+      } else {
+        const exitThreshold = (!this.player.isMoving && !this.isFlashlightOn) ? 40 : DETECTION_CHASE_EXIT;
+        if (this.detection < exitThreshold && bear.state === 'CHASE') {
+          bear.setInvestigate(this.player.x, this.player.y);
         }
       }
     }
 
-    if (detectionGain > 0) {
-      this.detection += detectionGain;
+    if (combinedDetectionGain > 0) {
+      this.detection += combinedDetectionGain;
     } else {
-      const decayRate = dist < 300 ? DETECTION_DECAY_NEAR : DETECTION_DECAY_FAR;
+      const decayRate = closestDist < 300 ? DETECTION_DECAY_NEAR : DETECTION_DECAY_FAR;
       const flashDecay = this.isFlashlightOn ? DETECTION_FLASHLIGHT_PENALTY : 0;
       this.detection -= decayRate * dt;
-      this.detection += flashDecay * dt; // flashlight hurts even while idle
+      this.detection += flashDecay * dt;
     }
 
     this.detection = Math.max(0, Math.min(100, this.detection));
-    this.senseStatus = currentSense;
-
-    // ── State machine ──────────────────────────────────────────────────────────
-    if (this.detection >= DETECTION_CHASE_THRESHOLD) {
-      if (this.bear.state !== 'CHASE') this.bear.setChase();
-    } else {
-      // Exit CHASE faster if hiding
-      const exitThreshold = (!this.player.isMoving && !this.isFlashlightOn) ? 40 : DETECTION_CHASE_EXIT;
-      if (this.detection < exitThreshold && this.bear.state === 'CHASE') {
-        this.bear.setInvestigate(this.player.x, this.player.y);
-      }
-    }
+    this.senseStatus = worstSense;
 
     // ── HUD messages ──────────────────────────────────────────────────────────
-
-    // Handle upgrade message priority
     if (this.upgradeMsgTimer > 0) {
       this.upgradeMsgTimer -= dt;
       msg = "LIGHT RANGE INCREASED!";
     }
 
     if (this.detection >= DETECTION_CHASE_THRESHOLD) {
-      msg = 'THE BEAR IS HUNTING YOU!';
+      msg = 'THE BEARS ARE HUNTING YOU!';
     } else {
       if (this.detection > 30) {
-        if (currentSense === 'VISION')   msg = 'RUN! The Bear sees you!';
-        else if (currentSense === 'HEARING') msg = 'The Bear heard you! FREEZE!';
-        else if (currentSense === 'SMELL')   msg = 'The Bear has your scent...';
-      } else if (dist < CLOSE_DISTANCE_MSG) {
-        msg = 'The Bear is extremely close...';
+        if (worstSense === 'VISION') msg = 'RUN! A Bear sees you!';
+        else if (worstSense === 'HEARING') msg = 'A Bear heard you! FREEZE!';
+        else if (worstSense === 'SMELL') msg = 'A Bear has your scent...';
+      } else if (closestDist < CLOSE_DISTANCE_MSG) {
+        msg = 'A Bear is extremely close...';
       }
     }
 
-    // ── Physical collision ─────────────────────────────────────────────────────
-    const touchDist = this.player.radius + this.bear.radius + 4;
-    if (dist < touchDist) {
-      // Mercy rule: if perfectly still and light off, bear just sniffs and leaves
-      if (!this.player.isMoving && !this.isFlashlightOn && this.detection < 85) {
-        if (this.encounterCount === 0) {
-           msg = "The Bear is sniffing you... DON'T MOVE!";
-           this.detection = 20; // Drop detection so it leaves
-           this.bear.forcePatrol(); // Make it actually walk away
-           this.encounterCount = 1; 
+    // ── Physical collision (Check all bears) ──────────────────────────────────
+    for (const bear of this.bears) {
+      const dist = Math.hypot(this.player.x - bear.x, this.player.y - bear.y);
+      const touchDist = this.player.radius + bear.radius + 4;
+      if (dist < touchDist) {
+        if (!this.player.isMoving && !this.isFlashlightOn && this.detection < 85) {
+          if (this.encounterCount === 0) {
+            msg = "The Bear is sniffing you... DON'T MOVE!";
+            this.detection = 20;
+            bear.forcePatrol();
+            this.encounterCount = 1;
+          }
+        } else {
+          this.isGameOver = true;
+          msg = 'A Bear caught you!';
+          this.screenShake = true;
+          this.camera.shake(16, 0.8);
+          break;
         }
-      } else {
-        this.isGameOver    = true;
-        msg                = 'The Bear caught you!';
-        this.screenShake   = true;
-        this.camera.shake(16, 0.8);
       }
-    } else {
-      // Reset encounter count when bear leaves
+    }
+    if (this.bears.every(b => Math.hypot(this.player.x - b.x, this.player.y - b.y) > CLOSE_DISTANCE_MSG)) {
       this.encounterCount = 0;
     }
 
@@ -393,7 +469,7 @@ export class GameEngine {
   }
 
   draw(ctx: CanvasRenderingContext2D) {
-    this.bear.draw(ctx);
+    for (const bear of this.bears) bear.draw(ctx);
     this.player.draw(ctx);
   }
 }

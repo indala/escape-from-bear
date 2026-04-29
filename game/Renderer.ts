@@ -1,5 +1,6 @@
 import { GameEngine } from './GameEngine';
 import { TILE_SIZE, MAP_WIDTH, MAP_HEIGHT } from './map/Level1';
+import { VisibilitySystem } from './systems/VisibilitySystem';
 
 export class Renderer {
   private canvas: HTMLCanvasElement;
@@ -192,13 +193,12 @@ export class Renderer {
   }
 
   private drawLightMask(engine: GameEngine) {
-    const { player, bear, isFlashlightOn, camera } = engine;
+    const { player, isFlashlightOn, camera } = engine;
     const lctx = this.lightCtx;
     const dpr = window.devicePixelRatio || 1;
 
     // Convert world positions to screen positions
     const ps = camera.toScreen(player.x, player.y);
-    const bs = camera.toScreen(bear.x, bear.y);
 
     lctx.setTransform(1, 0, 0, 1, 0, 0);
     lctx.scale(dpr, dpr);
@@ -211,8 +211,8 @@ export class Renderer {
 
     // Ambient light around player (increases with items)
     const itemsCollected = engine.items.filter(i => i.collected).length;
-    const ambientBase   = 130;
-    const ambientBonus  = itemsCollected * 20;
+    const ambientBase = 130;
+    const ambientBonus = itemsCollected * 20;
     const ambientRadius = ambientBase + ambientBonus;
 
     const ambient = lctx.createRadialGradient(ps.x, ps.y, 2, ps.x, ps.y, ambientRadius);
@@ -227,36 +227,49 @@ export class Renderer {
     // Directional flashlight cone (increases with items)
     if (isFlashlightOn) {
       const angle = player.facingAngle;
-      const coneAngle = Math.PI / 2.5; 
-      
-      const coneBase   = 450;
-      const coneBonus  = itemsCollected * 60;
+      const coneAngle = Math.PI / 2.5;
+
+      const coneBase = 450;
+      const coneBonus = itemsCollected * 60;
       const coneLength = coneBase + coneBonus;
+
+      const poly = VisibilitySystem.getVisiblePolygon(player.x, player.y, angle, coneAngle, coneLength, engine.map);
 
       const flashGrad = lctx.createRadialGradient(ps.x, ps.y, 20, ps.x, ps.y, coneLength);
       flashGrad.addColorStop(0, 'rgba(255,255,255,1)');
       flashGrad.addColorStop(0.5, 'rgba(255,255,255,0.85)');
       flashGrad.addColorStop(1, 'rgba(255,255,255,0)');
+
       lctx.fillStyle = flashGrad;
       lctx.beginPath();
-      lctx.moveTo(ps.x, ps.y);
-      const rot = camera.currentRotation;
-      lctx.arc(ps.x, ps.y, coneLength, angle + rot - coneAngle / 2, angle + rot + coneAngle / 2);
+      poly.forEach((p, i) => {
+        const sp = camera.toScreen(p.x, p.y);
+        if (i === 0) lctx.moveTo(sp.x, sp.y);
+        else lctx.lineTo(sp.x, sp.y);
+      });
       lctx.closePath();
       lctx.fill();
     }
 
-    // Bear vision cone reveals area (so player can see the bear's cone)
-    const bearGrad = lctx.createRadialGradient(bs.x, bs.y, 10, bs.x, bs.y, bear.visionRange);
-    bearGrad.addColorStop(0, 'rgba(255,255,255,0.4)');
-    bearGrad.addColorStop(1, 'rgba(255,255,255,0)');
-    lctx.fillStyle = bearGrad;
-    lctx.beginPath();
-    lctx.moveTo(bs.x, bs.y);
-    const rot = camera.currentRotation;
-    lctx.arc(bs.x, bs.y, bear.visionRange, bear.direction + rot - bear.visionAngle / 2, bear.direction + rot + bear.visionAngle / 2);
-    lctx.closePath();
-    lctx.fill();
+    // Bear vision cones reveal area (so player can see them)
+    for (const bear of engine.bears) {
+      const bs = camera.toScreen(bear.x, bear.y);
+      const bearPoly = VisibilitySystem.getVisiblePolygon(bear.x, bear.y, bear.direction, bear.visionAngle, bear.visionRange, engine.map);
+
+      const bearGrad = lctx.createRadialGradient(bs.x, bs.y, 10, bs.x, bs.y, bear.visionRange);
+      bearGrad.addColorStop(0, 'rgba(255,255,255,0.4)');
+      bearGrad.addColorStop(1, 'rgba(255,255,255,0)');
+
+      lctx.fillStyle = bearGrad;
+      lctx.beginPath();
+      bearPoly.forEach((p, i) => {
+        const sp = camera.toScreen(p.x, p.y);
+        if (i === 0) lctx.moveTo(sp.x, sp.y);
+        else lctx.lineTo(sp.x, sp.y);
+      });
+      lctx.closePath();
+      lctx.fill();
+    }
 
     // Composite onto main canvas
     this.ctx.drawImage(this.lightCanvas, 0, 0, this.width, this.height);

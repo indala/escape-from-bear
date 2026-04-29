@@ -1,29 +1,32 @@
 import { Player } from './Player';
 import { Pathfinder } from '../systems/Pathfinder';
-import { LEVEL1_MAP, TILE_SIZE } from '../map/Level1';
+import { TILE_SIZE } from '../map/Level1';
+import { VisibilitySystem } from '../systems/VisibilitySystem';
+import { LevelData } from '../config/LevelConfig';
 
-export type BearState = 'PATROL' | 'ALERT' | 'INVESTIGATE' | 'CHASE';
+export type BearState = 'PATROL' | 'ALERT' | 'INVESTIGATE' | 'CHASE' | 'MEETING';
 
 // ── Tuning constants (change here, affects everything) ──────────────────────
-const BEAR_SPEED_BASE        = 75;   // px/s in PATROL
-const BEAR_SPEED_ALERT_MULT  = 1.25;
+const BEAR_SPEED_BASE = 75;   // px/s in PATROL
+const BEAR_SPEED_ALERT_MULT = 1.25;
 const BEAR_SPEED_INVEST_MULT = 1.35;
-const BEAR_SPEED_CHASE_MULT  = 1.60;
-const BEAR_SPEED_CHASE_MAX   = 2.40; // ramp cap (multiplier)
-const BEAR_CHASE_RAMP_RATE   = 0.08; // how fast chase speed ramps per second
+const BEAR_SPEED_CHASE_MULT = 1.60;
+const BEAR_SPEED_CHASE_MAX = 2.40; // ramp cap (multiplier)
+const BEAR_CHASE_RAMP_RATE = 0.08; // how fast chase speed ramps per second
 
 const PATH_REFRESH_PATROL_MS = 400;  // ms between A* calls while patrolling
-const PATH_REFRESH_CHASE_MS  = 80;   // ms between A* calls while chasing
+const PATH_REFRESH_CHASE_MS = 80;   // ms between A* calls while chasing
 
-const SCAN_DURATION_PATROL   = 0.35; // s — brief look-around at patrol waypoints
-const SCAN_DURATION_ALERT    = 0.60; // s — look-around when reaching alert spot
-const SCAN_SPEED             = 2.2;  // rad/s during scan
+const SCAN_DURATION_PATROL = 0.35; // s — brief look-around at patrol waypoints
+const SCAN_DURATION_ALERT = 0.60; // s — look-around when reaching alert spot
+const SCAN_SPEED = 2.2;  // rad/s during scan
 
-const ALERT_TIMEOUT          = 5.0;  // s before ALERT reverts to PATROL
-const INVESTIGATE_TIMEOUT    = 8.0;  // s before INVESTIGATE reverts to PATROL
+const ALERT_TIMEOUT = 5.0;  // s before ALERT reverts to PATROL
+const INVESTIGATE_TIMEOUT = 8.0;  // s before INVESTIGATE reverts to PATROL
+const MEETING_COOLDOWN = 10.0; // s before another meeting can trigger
 
-const NODE_REACH_DIST        = 20;   // px — advance path when bear enters tile's half-width
-const WAYPOINT_REACH_DIST    = 28;   // px — how close to a patrol waypoint counts as "arrived"
+const NODE_REACH_DIST = 20;   // px — advance path when bear enters tile's half-width
+const WAYPOINT_REACH_DIST = 28;   // px — how close to a patrol waypoint counts as "arrived"
 
 // ── Bear entity ──────────────────────────────────────────────────────────────
 export class Bear {
@@ -34,20 +37,21 @@ export class Bear {
   state: BearState = 'PATROL';
   direction: number = 0;        // radians — current facing angle (for vision cone)
 
-  visionRange: number = 240;    // px
-  visionAngle: number = Math.PI / 2.2; // ~82°
+  visionRange: number;
+  visionAngle: number;
+  speedMult: number;
+  hearingRange: number;
 
   alertTarget: { x: number; y: number } | null = null;
-  alertTimer:  number = 0;
+  alertTimer: number = 0;
+  meetingTimer: number = 0;
+  meetingCooldown: number = 0;
 
   lastGrowlTime: number = 0;
 
-  // ── Dynamically computed from map — no hardcoding ──────────────────────────
-  // Waypoints are chosen as centres of known open-corridor tiles.
-  // Generation: scan LEVEL1_MAP for tiles[y][x]===0 with some spacing.
-  waypoints: { x: number; y: number }[] = Bear.generateWaypoints();
-
-  currentWaypointIndex: number = 0; // initialized properly in constructor
+  private map: number[][];
+  private waypoints: { x: number; y: number }[] = [];
+  private currentWaypointIndex: number = 0;
 
   // ── Internal ────────────────────────────────────────────────────────────────
   private path: { x: number; y: number }[] = [];
@@ -55,16 +59,21 @@ export class Bear {
   private chaseTime: number = 0;  // accumulated seconds in CHASE for speed ramp
 
   private scanTimer: number = 0;
-  private scanDir:   number = 1;
+  private scanDir: number = 1;
 
-  constructor() {
+  constructor(levelData: LevelData, map: number[][]) {
+    this.map = map;
+    this.visionRange = levelData.visionRange;
+    this.visionAngle = levelData.visionAngle;
+    this.speedMult = levelData.bearSpeedMult;
+    this.hearingRange = levelData.hearingRange;
+    this.waypoints = Bear.generateWaypoints(map);
     // Safe: initialize only after waypoints array exists
     this.currentWaypointIndex = Math.floor(Math.random() * this.waypoints.length);
   }
 
   // ── Static: auto-generate walkable patrol waypoints from the map ──────────
-  static generateWaypoints(): { x: number; y: number }[] {
-    const map  = LEVEL1_MAP;
+  static generateWaypoints(map: number[][]): { x: number; y: number }[] {
     const rows = map.length;
     const cols = map[0].length;
     const pts: { x: number; y: number }[] = [];
@@ -88,6 +97,17 @@ export class Bear {
   // ── Main update ─────────────────────────────────────────────────────────────
   update(dt: number, player: Player) {
     const nowMs = performance.now();
+
+    if (this.meetingCooldown > 0) this.meetingCooldown -= dt;
+
+    if (this.state === 'MEETING') {
+      this.meetingTimer -= dt;
+      if (this.meetingTimer <= 0) {
+        this.forcePatrol();
+        this.meetingCooldown = MEETING_COOLDOWN;
+      }
+      return; // Stop all logic while meeting
+    }
 
     // Speed ramp for chase
     this.chaseTime = this.state === 'CHASE' ? this.chaseTime + dt : 0;
@@ -116,38 +136,45 @@ export class Bear {
   // ── State setters (called from GameEngine) ──────────────────────────────────
   setAlert(targetX: number, targetY: number) {
     if (this.state === 'CHASE') return;
-    this.state       = 'ALERT';
-    this.alertTimer  = ALERT_TIMEOUT;
+    this.state = 'ALERT';
+    this.alertTimer = ALERT_TIMEOUT;
     this.alertTarget = { x: targetX, y: targetY };
-    this.path        = [];          // force immediate re-path
+    this.path = [];          // force immediate re-path
     this.lastPathRefreshMs = 0;     // bypass interval
   }
 
   setChase() {
     if (this.state === 'CHASE') return;
-    this.state             = 'CHASE';
-    this.path              = [];
+    this.state = 'CHASE';
+    this.path = [];
     this.lastPathRefreshMs = 0;     // immediately re-path toward player
-    this.scanTimer         = 0;     // cancel any scan
+    this.scanTimer = 0;     // cancel any scan
   }
 
   setInvestigate(targetX: number, targetY: number) {
     if (this.state === 'CHASE') return;
-    this.state       = 'INVESTIGATE';
+    this.state = 'INVESTIGATE';
     this.alertTarget = { x: targetX, y: targetY };
-    this.alertTimer  = INVESTIGATE_TIMEOUT;
-    this.path        = [];
+    this.alertTimer = INVESTIGATE_TIMEOUT;
+    this.path = [];
     this.lastPathRefreshMs = 0;
+  }
+
+  setMeeting(duration: number) {
+    if (this.state === 'CHASE' || this.meetingCooldown > 0) return;
+    this.state = 'MEETING';
+    this.meetingTimer = duration;
+    this.path = [];
   }
 
   /** Force the bear to forget everything and just patrol */
   forcePatrol() {
-    this.state             = 'PATROL';
-    this.alertTarget       = null;
-    this.alertTimer        = 0;
-    this.scanTimer         = 0;
-    this.chaseTime         = 0;
-    this.path              = [];
+    this.state = 'PATROL';
+    this.alertTarget = null;
+    this.alertTimer = 0;
+    this.scanTimer = 0;
+    this.chaseTime = 0;
+    this.path = [];
     this.lastPathRefreshMs = 0;
     this.pickNewWaypoint();
   }
@@ -155,7 +182,7 @@ export class Bear {
   // ── Path computation ─────────────────────────────────────────────────────────
   private refreshPath(player: Player) {
     const target = this.currentTarget(player);
-    const result = Pathfinder.findPath(this.x, this.y, target.x, target.y, LEVEL1_MAP);
+    const result = Pathfinder.findPath(this.x, this.y, target.x, target.y, this.map);
 
     if (result && result.length > 0) {
       this.path = result;
@@ -183,8 +210,8 @@ export class Bear {
     }
 
     const node = this.path[0];
-    const dx   = node.x - this.x;
-    const dy   = node.y - this.y;
+    const dx = node.x - this.x;
+    const dy = node.y - this.y;
     const dist = Math.hypot(dx, dy);
 
     if (dist < NODE_REACH_DIST) {
@@ -197,7 +224,7 @@ export class Bear {
     // Smooth turn toward movement direction
     let diff = targetAngle - this.direction;
     while (diff < -Math.PI) diff += Math.PI * 2;
-    while (diff > Math.PI)  diff -= Math.PI * 2;
+    while (diff > Math.PI) diff -= Math.PI * 2;
     const turnRate = this.state === 'CHASE' ? 18 : 10;
     this.direction += diff * Math.min(turnRate * dt, 1.0);
 
@@ -207,12 +234,13 @@ export class Bear {
       BEAR_SPEED_CHASE_MAX
     );
     const multByState: Record<BearState, number> = {
-      PATROL:      1.0,
-      ALERT:       BEAR_SPEED_ALERT_MULT,
+      PATROL: 1.0,
+      ALERT: BEAR_SPEED_ALERT_MULT,
       INVESTIGATE: BEAR_SPEED_INVEST_MULT,
-      CHASE:       chaseMult,
+      CHASE: chaseMult,
+      MEETING: 0,
     };
-    const spd = BEAR_SPEED_BASE * multByState[this.state];
+    const spd = BEAR_SPEED_BASE * multByState[this.state] * this.speedMult;
 
     // Move in exact direction of path node (avoids wall hugging from direction drift)
     this.x += Math.cos(targetAngle) * spd * dt;
@@ -224,9 +252,9 @@ export class Bear {
       case 'PATROL':
         // Arrived at waypoint — brief scan, then move on
         if (Math.hypot(this.x - this.waypoints[this.currentWaypointIndex].x,
-                       this.y - this.waypoints[this.currentWaypointIndex].y) < WAYPOINT_REACH_DIST) {
+          this.y - this.waypoints[this.currentWaypointIndex].y) < WAYPOINT_REACH_DIST) {
           this.scanTimer = SCAN_DURATION_PATROL;
-          this.scanDir   = Math.random() < 0.5 ? 1 : -1;
+          this.scanDir = Math.random() < 0.5 ? 1 : -1;
         } else {
           // Didn't reach waypoint — just pick a new one
           this.pickNewWaypoint();
@@ -234,13 +262,13 @@ export class Bear {
         break;
 
       case 'ALERT':
-        this.state     = 'INVESTIGATE';
+        this.state = 'INVESTIGATE';
         this.scanTimer = SCAN_DURATION_ALERT;
-        this.scanDir   = Math.random() < 0.5 ? 1 : -1;
+        this.scanDir = Math.random() < 0.5 ? 1 : -1;
         break;
 
       case 'INVESTIGATE':
-        this.state       = 'PATROL';
+        this.state = 'PATROL';
         this.alertTarget = null;
         this.pickNewWaypoint();
         break;
@@ -256,7 +284,7 @@ export class Bear {
     if (this.state !== 'ALERT' && this.state !== 'INVESTIGATE') return;
     this.alertTimer -= dt;
     if (this.alertTimer <= 0) {
-      this.state       = 'PATROL';
+      this.state = 'PATROL';
       this.alertTarget = null;
       this.pickNewWaypoint();
     }
@@ -268,7 +296,7 @@ export class Bear {
     do { next = Math.floor(Math.random() * this.waypoints.length); }
     while (next === this.currentWaypointIndex);
     this.currentWaypointIndex = next;
-    this.path              = [];
+    this.path = [];
     this.lastPathRefreshMs = 0; // force immediate re-path
   }
 
@@ -280,22 +308,26 @@ export class Bear {
 
   private drawVisionCone(ctx: CanvasRenderingContext2D) {
     const alphas: Record<BearState, number> = {
-      PATROL: 0.07, ALERT: 0.18, INVESTIGATE: 0.22, CHASE: 0.30,
+      PATROL: 0.07, ALERT: 0.18, INVESTIGATE: 0.22, CHASE: 0.30, MEETING: 0.15,
     };
     const colors: Record<BearState, string> = {
-      PATROL:      `rgba(255,80,80,${alphas.PATROL})`,
-      ALERT:       `rgba(255,160,0,${alphas.ALERT})`,
+      PATROL: `rgba(255,80,80,${alphas.PATROL})`,
+      ALERT: `rgba(255,160,0,${alphas.ALERT})`,
       INVESTIGATE: `rgba(255,200,0,${alphas.INVESTIGATE})`,
-      CHASE:       `rgba(255,0,0,${alphas.CHASE})`,
+      CHASE: `rgba(255,0,0,${alphas.CHASE})`,
+      MEETING: `rgba(0,255,255,${alphas.MEETING})`,
     };
 
     ctx.save();
     ctx.fillStyle = colors[this.state];
     ctx.beginPath();
-    ctx.moveTo(this.x, this.y);
-    ctx.arc(this.x, this.y, this.visionRange,
-      this.direction - this.visionAngle / 2,
-      this.direction + this.visionAngle / 2);
+
+    const poly = VisibilitySystem.getVisiblePolygon(this.x, this.y, this.direction, this.visionAngle, this.visionRange, this.map);
+    poly.forEach((p, i) => {
+      if (i === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    });
+
     ctx.closePath();
     ctx.fill();
     ctx.restore();
@@ -303,19 +335,20 @@ export class Bear {
 
   private drawBody(ctx: CanvasRenderingContext2D) {
     const stateColors: Record<BearState, string> = {
-      PATROL:      '#8B4513',
-      ALERT:       '#cc6600',
+      PATROL: '#8B4513',
+      ALERT: '#cc6600',
       INVESTIGATE: '#cc9900',
-      CHASE:       '#cc1100',
+      CHASE: '#cc1100',
+      MEETING: '#22aaaa',
     };
     const color = stateColors[this.state];
-    const r     = this.radius;
+    const r = this.radius;
 
     ctx.save();
     ctx.translate(this.x, this.y);
     ctx.rotate(this.direction + Math.PI / 2);
 
-    ctx.shadowBlur  = this.state === 'CHASE' ? 24 : 10;
+    ctx.shadowBlur = this.state === 'CHASE' ? 24 : 10;
     ctx.shadowColor = color;
 
     // Body
@@ -331,18 +364,18 @@ export class Bear {
 
     // Ears
     ctx.beginPath(); ctx.arc(-r * 0.55, -r * 1.65, r * 0.30, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc( r * 0.55, -r * 1.65, r * 0.30, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(r * 0.55, -r * 1.65, r * 0.30, 0, Math.PI * 2); ctx.fill();
 
     // Eye whites
     ctx.shadowBlur = 0;
-    ctx.fillStyle  = 'white';
+    ctx.fillStyle = 'white';
     ctx.beginPath(); ctx.arc(-r * 0.28, -r * 1.15, r * 0.18, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc( r * 0.28, -r * 1.15, r * 0.18, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(r * 0.28, -r * 1.15, r * 0.18, 0, Math.PI * 2); ctx.fill();
 
     // Pupils
     ctx.fillStyle = this.state === 'CHASE' ? '#ff0000' : '#111';
     ctx.beginPath(); ctx.arc(-r * 0.28, -r * 1.15, r * 0.10, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc( r * 0.28, -r * 1.15, r * 0.10, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(r * 0.28, -r * 1.15, r * 0.10, 0, Math.PI * 2); ctx.fill();
 
     ctx.restore();
   }
@@ -351,11 +384,19 @@ export class Bear {
   checkDetection(player: Player): boolean {
     const dx = player.x - this.x;
     const dy = player.y - this.y;
-    if (Math.hypot(dx, dy) > this.visionRange) return false;
+    const dist = Math.hypot(dx, dy);
+
+    if (dist > this.visionRange) return false;
+
+    // ── New: Line of Sight check ───────────────────────────────────────────────
+    if (!VisibilitySystem.hasLineOfSight(this.x, this.y, player.x, player.y, this.map)) {
+      return false;
+    }
+
     const angle = Math.atan2(dy, dx);
-    let diff    = angle - this.direction;
+    let diff = angle - this.direction;
     while (diff < -Math.PI) diff += Math.PI * 2;
-    while (diff >  Math.PI) diff -= Math.PI * 2;
+    while (diff > Math.PI) diff -= Math.PI * 2;
     return Math.abs(diff) < this.visionAngle / 2;
   }
 }
