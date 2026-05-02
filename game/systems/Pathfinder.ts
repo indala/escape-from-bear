@@ -173,17 +173,23 @@ export class Pathfinder {
 
   /** Find the nearest walkable tile to (tx, ty) using BFS */
   private static nearestWalkable(tx: number, ty: number): { x: number; y: number } | null {
+    // Ensure initial target is within map bounds for visited array
+    const startX = Math.max(0, Math.min(mapCols - 1, tx));
+    const startY = Math.max(0, Math.min(mapRows - 1, ty));
+    
     const visited = new Uint8Array(mapRows * mapCols);
-    const queue: [number, number][] = [[tx, ty]];
-    visited[ty * mapCols + tx] = 1;
+    const queue: [number, number][] = [[startX, startY]];
+    visited[startY * mapCols + startX] = 1;
 
     while (queue.length > 0) {
       const [cx, cy] = queue.shift()!;
       if (isWalkable(cx, cy)) return { x: cx, y: cy };
+      
       for (const d of DIRS) {
         const nx = cx + d.x, ny = cy + d.y;
-        const nIdx = ny * mapCols + nx;
         if (nx < 0 || ny < 0 || nx >= mapCols || ny >= mapRows) continue;
+        
+        const nIdx = ny * mapCols + nx;
         if (visited[nIdx]) continue;
         visited[nIdx] = 1;
         queue.push([nx, ny]);
@@ -191,6 +197,7 @@ export class Pathfinder {
     }
     return null;
   }
+
 
   /** Reconstruct path from goal node, return tile-centre pixel coords.
    *  IMPORTANT: we slice off index 0 (the bear's own current tile centre).

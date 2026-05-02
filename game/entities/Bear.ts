@@ -25,7 +25,8 @@ const ALERT_TIMEOUT = 5.0;  // s before ALERT reverts to PATROL
 const INVESTIGATE_TIMEOUT = 8.0;  // s before INVESTIGATE reverts to PATROL
 const MEETING_COOLDOWN = 10.0; // s before another meeting can trigger
 
-const NODE_REACH_DIST = 20;   // px — advance path when bear enters tile's half-width
+const NODE_REACH_DIST = 24;   // px — advance path when bear enters tile's half-width
+
 const WAYPOINT_REACH_DIST = 28;   // px — how close to a patrol waypoint counts as "arrived"
 
 // ── Bear entity ──────────────────────────────────────────────────────────────
@@ -205,10 +206,11 @@ export class Bear {
       // If pathfinding fails, handle based on state
       if (this.state === 'PATROL') {
         this.pickNewWaypoint();
-      } else if (this.state === 'INVESTIGATE' || this.state === 'ALERT') {
+      } else if (this.state === 'INVESTIGATE' || this.state === 'ALERT' || this.state === 'CHASE') {
         this.endSearch();
       }
     }
+
 
 
     // result===[] means already at target — onPathExhausted handles it
@@ -225,7 +227,7 @@ export class Bear {
         const leadTime = 0.45; // seconds to look ahead
         tx += Math.cos(player.facingAngle) * player.speed * leadTime;
         ty += Math.sin(player.facingAngle) * player.speed * leadTime;
-        
+
         // Don't lead into walls (simple bounds check)
         const mx = Math.floor(tx / TILE_SIZE);
         const my = Math.floor(ty / TILE_SIZE);
@@ -256,14 +258,14 @@ export class Bear {
     const node = this.path[0];
     const target = this.currentTarget(player);
 
-    
+
     // ── SMART: Direct Charge (Smooth movement) ───────────────────────────────
     // If we have a direct LOS to the FINAL target, ignore the A* path nodes
     // and move straight. This removes the robotic tile-by-tile movement.
     const dxFull = target.x - this.x;
     const dyFull = target.y - this.y;
     const distFull = Math.hypot(dxFull, dyFull);
-    
+
     let useDirectCharge = false;
     if (this.state === 'CHASE' && distFull < 400) {
       if (VisibilitySystem.hasLineOfSight(this.x, this.y, target.x, target.y, this.map)) {
@@ -276,10 +278,17 @@ export class Bear {
     const dy = moveTarget.y - this.y;
     const dist = Math.hypot(dx, dy);
 
-    if (dist < NODE_REACH_DIST && !useDirectCharge) {
-      this.path.shift();
+    if (dist < NODE_REACH_DIST) {
+      if (useDirectCharge) {
+        // If we are charging directly and have reached the current target, 
+        // clear path to force a new A* if we lose LOS later.
+        this.path = [];
+      } else {
+        this.path.shift();
+      }
       return;
     }
+
 
     const targetAngle = Math.atan2(dy, dx);
 
@@ -337,7 +346,7 @@ export class Bear {
           const dist = 80 + Math.random() * 100;
           const tx = this.x + Math.cos(angle) * dist;
           const ty = this.y + Math.sin(angle) * dist;
-          
+
           // Verify if walkable (simple grid check)
           const mx = Math.floor(tx / TILE_SIZE);
           const my = Math.floor(ty / TILE_SIZE);
