@@ -134,7 +134,8 @@ export class Bear {
       this.lastPathRefreshMs = nowMs;
     }
 
-    this.followPath(dt);
+    this.followPath(dt, player);
+
     this.tickAlertTimer(dt);
 
     // Update last known position if player is visible
@@ -215,8 +216,27 @@ export class Bear {
 
   private currentTarget(player: Player): { x: number; y: number } {
     if (this.state === 'CHASE') {
-      if (this.canSeePlayer) return { x: player.x, y: player.y };
-      return this.lastKnownPlayerPos || { x: player.x, y: player.y };
+      let tx = player.x;
+      let ty = player.y;
+
+      // ── SMART: Anticipation (Lead the target) ─────────────────────────────
+      // If player is moving, aim slightly ahead based on their speed
+      if (player.isMoving) {
+        const leadTime = 0.45; // seconds to look ahead
+        tx += Math.cos(player.facingAngle) * player.speed * leadTime;
+        ty += Math.sin(player.facingAngle) * player.speed * leadTime;
+        
+        // Don't lead into walls (simple bounds check)
+        const mx = Math.floor(tx / TILE_SIZE);
+        const my = Math.floor(ty / TILE_SIZE);
+        if (!this.map[my] || this.map[my][mx] !== 0) {
+          tx = player.x; // Fallback to current pos if prediction is in a wall
+          ty = player.y;
+        }
+      }
+
+      if (this.canSeePlayer) return { x: tx, y: ty };
+      return this.lastKnownPlayerPos || { x: tx, y: ty };
     }
     if ((this.state === 'ALERT' || this.state === 'INVESTIGATE') && this.alertTarget) {
       return this.alertTarget;
@@ -225,19 +245,38 @@ export class Bear {
   }
 
 
+
   // ── Movement along path ──────────────────────────────────────────────────────
-  private followPath(dt: number) {
+  private followPath(dt: number, player: Player) {
     if (this.path.length === 0) {
       this.onPathExhausted();
       return;
     }
 
     const node = this.path[0];
-    const dx = node.x - this.x;
-    const dy = node.y - this.y;
+    const target = this.currentTarget(player);
+
+    
+    // ── SMART: Direct Charge (Smooth movement) ───────────────────────────────
+    // If we have a direct LOS to the FINAL target, ignore the A* path nodes
+    // and move straight. This removes the robotic tile-by-tile movement.
+    const dxFull = target.x - this.x;
+    const dyFull = target.y - this.y;
+    const distFull = Math.hypot(dxFull, dyFull);
+    
+    let useDirectCharge = false;
+    if (this.state === 'CHASE' && distFull < 400) {
+      if (VisibilitySystem.hasLineOfSight(this.x, this.y, target.x, target.y, this.map)) {
+        useDirectCharge = true;
+      }
+    }
+
+    const moveTarget = useDirectCharge ? target : node;
+    const dx = moveTarget.x - this.x;
+    const dy = moveTarget.y - this.y;
     const dist = Math.hypot(dx, dy);
 
-    if (dist < NODE_REACH_DIST) {
+    if (dist < NODE_REACH_DIST && !useDirectCharge) {
       this.path.shift();
       return;
     }
@@ -248,8 +287,9 @@ export class Bear {
     let diff = targetAngle - this.direction;
     while (diff < -Math.PI) diff += Math.PI * 2;
     while (diff > Math.PI) diff -= Math.PI * 2;
-    const turnRate = this.state === 'CHASE' ? 18 : 10;
+    const turnRate = this.state === 'CHASE' ? 25 : 10;
     this.direction += diff * Math.min(turnRate * dt, 1.0);
+
 
     // Speed
     const chaseMult = Math.min(
