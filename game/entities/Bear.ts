@@ -1,6 +1,6 @@
 import { Player } from './Player';
 import { Pathfinder } from '../systems/Pathfinder';
-import { TILE_SIZE } from '../map/Level1';
+import { TILE_SIZE } from '../map/MapData';
 import { VisibilitySystem } from '../systems/VisibilitySystem';
 import { LevelData } from '../config/LevelConfig';
 
@@ -46,6 +46,11 @@ export class Bear {
   alertTimer: number = 0;
   meetingTimer: number = 0;
   meetingCooldown: number = 0;
+  private searchPointsCount: number = 0;
+  public lastKnownPlayerPos: { x: number; y: number } | null = null;
+  public canSeePlayer: boolean = false;
+
+
 
   lastGrowlTime: number = 0;
 
@@ -131,7 +136,13 @@ export class Bear {
 
     this.followPath(dt);
     this.tickAlertTimer(dt);
+
+    // Update last known position if player is visible
+    if (this.canSeePlayer) {
+      this.lastKnownPlayerPos = { x: player.x, y: player.y };
+    }
   }
+
 
   // ── State setters (called from GameEngine) ──────────────────────────────────
   setAlert(targetX: number, targetY: number) {
@@ -194,13 +205,15 @@ export class Bear {
 
   private currentTarget(player: Player): { x: number; y: number } {
     if (this.state === 'CHASE') {
-      return { x: player.x, y: player.y };
+      if (this.canSeePlayer) return { x: player.x, y: player.y };
+      return this.lastKnownPlayerPos || { x: player.x, y: player.y };
     }
     if ((this.state === 'ALERT' || this.state === 'INVESTIGATE') && this.alertTarget) {
       return this.alertTarget;
     }
     return this.waypoints[this.currentWaypointIndex];
   }
+
 
   // ── Movement along path ──────────────────────────────────────────────────────
   private followPath(dt: number) {
@@ -268,15 +281,38 @@ export class Bear {
         break;
 
       case 'INVESTIGATE':
-        this.state = 'PATROL';
-        this.alertTarget = null;
-        this.pickNewWaypoint();
+        if (this.searchPointsCount < 2) {
+          // Pick a random spot nearby to continue searching
+          const angle = Math.random() * Math.PI * 2;
+          const dist = 80 + Math.random() * 100;
+          const tx = this.x + Math.cos(angle) * dist;
+          const ty = this.y + Math.sin(angle) * dist;
+          
+          // Verify if walkable (simple grid check)
+          const mx = Math.floor(tx / TILE_SIZE);
+          const my = Math.floor(ty / TILE_SIZE);
+          if (this.map[my] && this.map[my][mx] === 0) {
+            this.alertTarget = { x: tx, y: ty };
+            this.searchPointsCount++;
+            this.path = [];
+            this.lastPathRefreshMs = 0;
+            this.scanTimer = SCAN_DURATION_ALERT; // brief look before moving to next search spot
+          } else {
+            this.endSearch();
+          }
+        } else {
+          this.endSearch();
+        }
         break;
 
+
       case 'CHASE':
-        // Path exhausted while chasing = we're right next to the player.
-        // refreshPath will immediately get a new path next interval.
+        if (!this.canSeePlayer && this.lastKnownPlayerPos) {
+          // Reached last known pos but player is gone — start searching
+          this.setInvestigate(this.x, this.y);
+        }
         break;
+
     }
   }
 
@@ -290,7 +326,15 @@ export class Bear {
     }
   }
 
+  private endSearch() {
+    this.state = 'PATROL';
+    this.alertTarget = null;
+    this.searchPointsCount = 0;
+    this.pickNewWaypoint();
+  }
+
   public pickNewWaypoint() {
+
     if (this.waypoints.length <= 1) return;
     let next: number;
     do { next = Math.floor(Math.random() * this.waypoints.length); }

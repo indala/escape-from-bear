@@ -6,7 +6,8 @@ import { Renderer } from '@/game/Renderer';
 import { GameLoop } from '@/game/GameLoop';
 import { AudioManager } from '@/game/AudioManager';
 
-type BearState = 'PATROL' | 'ALERT' | 'INVESTIGATE' | 'CHASE';
+type BearState = 'PATROL' | 'ALERT' | 'INVESTIGATE' | 'CHASE' | 'MEETING';
+
 
 export default function GameView() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -211,7 +212,9 @@ export default function GameView() {
     ALERT: { label: '🐻 Alerted!', text: 'text-orange-400', border: 'border-orange-400/40', bg: 'bg-orange-400/10' },
     INVESTIGATE: { label: '🐻 Investigating', text: 'text-yellow-400', border: 'border-yellow-400/40', bg: 'bg-yellow-400/10' },
     CHASE: { label: '🐻 CHASING!', text: 'text-red-500', border: 'border-red-500/50', bg: 'bg-red-500/10' },
+    MEETING: { label: '🐻 Meeting', text: 'text-cyan-400', border: 'border-cyan-400/40', bg: 'bg-cyan-400/10' },
   };
+
   const bc = bearConfig[bearState];
 
   const msgTextColor =

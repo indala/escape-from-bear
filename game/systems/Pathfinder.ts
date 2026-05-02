@@ -1,4 +1,4 @@
-import { TILE_SIZE } from '../map/Level1';
+import { TILE_SIZE } from '../map/MapData';
 
 // ─── Binary Min-Heap ──────────────────────────────────────────────────────────
 class MinHeap {

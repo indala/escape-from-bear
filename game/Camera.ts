@@ -1,4 +1,5 @@
-import { MAP_WIDTH, MAP_HEIGHT } from './map/Level1';
+// Camera is now dimension-agnostic and receives bounds during update
+
 
 export class Camera {
   x: number = 0;
@@ -45,10 +46,12 @@ export class Camera {
    * @param targetX      player world X
    * @param targetY      player world Y
    * @param dt           delta time in seconds
-   * @param velX         player velocity X (normalised, -1..1)
-   * @param velY         player velocity Y (normalised, -1..1)
+   * @param velX         player direction X (normalised, -1..1)
+   * @param velY         player direction Y (normalised, -1..1)
    * @param isMoving     whether the player is moving
-   * @param facingAngle  player's current rotation in radians
+   * @param mapWidth     current map width
+   * @param mapHeight    current map height
+   * @param isFlashlightOn whether the flashlight is active
    */
   update(
     targetX: number,
@@ -56,21 +59,29 @@ export class Camera {
     dt: number,
     velX: number = 0,
     velY: number = 0,
-    isMoving: boolean = false
+    isMoving: boolean = false,
+    mapWidth: number = 0,
+    mapHeight: number = 0,
+    isFlashlightOn: boolean = false
   ) {
     // We no longer rotate the map on mobile to prevent motion sickness and improve UX
     this.currentRotation = 0;
 
     // Mobile specific overrides for camera feel:
-    // - No look-ahead to keep player more centered on small screens
-    // - No deadzone for more immediate tracking
-    const lookAheadDist = this.isMobile ? 0 : this.LOOK_AHEAD_DIST;
+    // - On mobile, we only use look-ahead when the flashlight is on to show the lit area
+    const lookAheadDist = this.isMobile 
+      ? (isFlashlightOn ? this.LOOK_AHEAD_DIST * 1.5 : 0) 
+      : this.LOOK_AHEAD_DIST;
+
     const deadzoneX     = this.isMobile ? 0 : this.DEADZONE_X;
     const deadzoneY     = this.isMobile ? 0 : this.DEADZONE_Y;
 
-    // 1. Calculate Look-ahead (smoothly offset toward movement direction)
-    const targetLookX = isMoving ? velX * lookAheadDist : 0;
-    const targetLookY = isMoving ? velY * lookAheadDist : 0;
+    // 1. Calculate Look-ahead (smoothly offset toward movement or light direction)
+    // On mobile, if flashlight is on, we always offset even if not moving
+    const isActive = isMoving || (this.isMobile && isFlashlightOn);
+    const targetLookX = isActive ? velX * lookAheadDist : 0;
+    const targetLookY = isActive ? velY * lookAheadDist : 0;
+
 
     this.lookAheadX += (targetLookX - this.lookAheadX) * Math.min(1, this.LOOK_AHEAD_SPEED * dt);
     this.lookAheadY += (targetLookY - this.lookAheadY) * Math.min(1, this.LOOK_AHEAD_SPEED * dt);
@@ -93,9 +104,9 @@ export class Camera {
     }
 
     // 4. Clamp to map bounds (Desktop only - mobile stays centered even at edges)
-    if (!this.isMobile) {
-      this.x = Math.max(0, Math.min(MAP_WIDTH  - this.width,  this.x));
-      this.y = Math.max(0, Math.min(MAP_HEIGHT - this.height, this.y));
+    if (!this.isMobile && mapWidth > 0 && mapHeight > 0) {
+      this.x = Math.max(0, Math.min(mapWidth  - this.width,  this.x));
+      this.y = Math.max(0, Math.min(mapHeight - this.height, this.y));
     }
 
     // ── Screen shake ──────────────────────────────────────────────────────────
@@ -109,6 +120,7 @@ export class Camera {
       this.shakeOffsetY = 0;
     }
   }
+
 
   apply(ctx: CanvasRenderingContext2D) {
     // 1. Move to screen center with shake offset

@@ -1,5 +1,5 @@
 import { GameEngine } from './GameEngine';
-import { TILE_SIZE, MAP_WIDTH, MAP_HEIGHT } from './map/Level1';
+import { TILE_SIZE } from './map/MapData';
 import { VisibilitySystem } from './systems/VisibilitySystem';
 
 export class Renderer {
@@ -46,8 +46,9 @@ export class Renderer {
     ctx.save();
     cam.apply(ctx);
 
-    this.drawFloor(engine.map);
+    this.drawFloor(engine);
     this.drawWalls(engine.map);
+
     this.drawEntry(engine.entry);
     this.drawItems(engine.items);
     this.drawExit(engine.exit);
@@ -62,9 +63,11 @@ export class Renderer {
     this.drawVignette();
   }
 
-  private drawFloor(map: number[][]) {
+  private drawFloor(engine: GameEngine) {
+    const map = engine.map;
     this.ctx.fillStyle = '#0d0d12';
-    this.ctx.fillRect(0, 0, MAP_WIDTH, MAP_HEIGHT);
+    this.ctx.fillRect(0, 0, engine.mapWidth, engine.mapHeight);
+
 
     // Subtle floor grid
     this.ctx.strokeStyle = 'rgba(255,255,255,0.025)';
@@ -202,17 +205,19 @@ export class Renderer {
 
     lctx.setTransform(1, 0, 0, 1, 0, 0);
     lctx.scale(dpr, dpr);
-    // Full darkness
+    // Deep darkness
     lctx.globalCompositeOperation = 'source-over';
-    lctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+    lctx.fillStyle = 'rgba(0, 0, 0, 0.94)';
     lctx.fillRect(0, 0, this.width, this.height);
+
 
     lctx.globalCompositeOperation = 'destination-out';
 
     // Ambient light around player (increases with items)
     const itemsCollected = engine.items.filter(i => i.collected).length;
-    const ambientBase = 130;
-    const ambientBonus = itemsCollected * 20;
+    const ambientBase = 80;
+    const ambientBonus = itemsCollected * 15;
+
     const ambientRadius = ambientBase + ambientBonus;
 
     const ambient = lctx.createRadialGradient(ps.x, ps.y, 2, ps.x, ps.y, ambientRadius);
@@ -227,7 +232,8 @@ export class Renderer {
     // Directional flashlight cone (increases with items)
     if (isFlashlightOn) {
       const angle = player.facingAngle;
-      const coneAngle = Math.PI / 2.5;
+      const coneAngle = Math.PI / 2.2;
+
 
       const coneBase = 450;
       const coneBonus = itemsCollected * 60;
@@ -249,7 +255,27 @@ export class Renderer {
       });
       lctx.closePath();
       lctx.fill();
+
+      // Add a subtle volumetric tint/glow (Additive)
+      this.ctx.save();
+      this.ctx.globalCompositeOperation = 'screen';
+      const glowGrad = this.ctx.createRadialGradient(ps.x, ps.y, 10, ps.x, ps.y, coneLength);
+      glowGrad.addColorStop(0, 'rgba(255, 245, 180, 0.15)');
+      glowGrad.addColorStop(0.4, 'rgba(255, 245, 180, 0.05)');
+      glowGrad.addColorStop(1, 'rgba(255, 245, 180, 0)');
+      
+      this.ctx.fillStyle = glowGrad;
+      this.ctx.beginPath();
+      poly.forEach((p, i) => {
+        const sp = camera.toScreen(p.x, p.y);
+        if (i === 0) this.ctx.moveTo(sp.x, sp.y);
+        else this.ctx.lineTo(sp.x, sp.y);
+      });
+      this.ctx.closePath();
+      this.ctx.fill();
+      this.ctx.restore();
     }
+
 
     // Bear vision cones reveal area (so player can see them)
     for (const bear of engine.bears) {

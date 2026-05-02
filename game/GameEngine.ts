@@ -1,7 +1,7 @@
 import { Input } from './Input';
 import { Player } from './entities/Player';
 import { Bear, BearState as BearStatePublic } from './entities/Bear';
-import { TILE_SIZE } from './map/Level1';
+import { TILE_SIZE } from './map/MapData';
 import { CollisionSystem } from './systems/CollisionSystem';
 import { Camera } from './Camera';
 import { LEVELS } from './config/LevelConfig';
@@ -95,6 +95,9 @@ export class GameEngine {
   input: Input;
   camera: Camera;
   map!: number[][];
+  mapWidth: number = 0;
+  mapHeight: number = 0;
+
 
   items: { x: number; y: number; collected: boolean }[] = [];
   entry: { x: number; y: number } = { x: 0, y: 0 };
@@ -124,6 +127,9 @@ export class GameEngine {
     this.currentLevel = level;
     const levelData = LEVELS[this.currentLevel] || LEVELS[1];
     this.map = ALL_MAPS[levelData.mapIndex] || ALL_MAPS[0];
+    this.mapWidth = this.map[0].length * TILE_SIZE;
+    this.mapHeight = this.map.length * TILE_SIZE;
+
 
     // Find entry: top-left open tile
     let ex = 1, ey = 1;
@@ -270,8 +276,13 @@ export class GameEngine {
       dt,
       Math.cos(this.player.facingAngle),
       Math.sin(this.player.facingAngle),
-      this.player.isMoving
+      this.player.isMoving,
+      this.mapWidth,
+      this.mapHeight,
+      this.isFlashlightOn
     );
+
+
 
     this.updateDetection(dt);
     this.checkItems();
@@ -350,9 +361,11 @@ export class GameEngine {
 
       const isSmelling = dist < SMELL_RANGE;
       const isHearing = this.player.isMoving && dist < bear.hearingRange;
-
-      let currentBearSense: 'NONE' | 'VISION' | 'HEARING' | 'SMELL' = 'NONE';
+      bear.canSeePlayer = isVisible;
+      
       let bearDetectionGain = 0;
+      let currentBearSense: 'NONE' | 'VISION' | 'HEARING' | 'SMELL' = 'NONE';
+
 
       if (isVisible) {
         currentBearSense = 'VISION';
@@ -383,11 +396,14 @@ export class GameEngine {
 
         const itemsCollected = this.items.filter(i => i.collected).length;
         const coneLength = 420 + (itemsCollected * 55);
-        const coneAngle = Math.PI / 2.8;
+        const coneAngle = Math.PI / 2.2;
+
 
         if (dist < coneLength && Math.abs(diff) < coneAngle / 2) {
           bearDetectionGain += 45 * dt;
+          bear.canSeePlayer = true; // Flashlight makes player visible even if bear was looking away
           if (bear.state === 'PATROL' || bear.state === 'INVESTIGATE') {
+
             bear.setAlert(this.player.x, this.player.y);
             msg = "THE BEAR SEES YOUR LIGHT!";
           }
@@ -448,10 +464,13 @@ export class GameEngine {
         if (!this.player.isMoving && !this.isFlashlightOn && this.detection < 85) {
           if (this.encounterCount === 0) {
             msg = "The Bear is sniffing you... DON'T MOVE!";
-            this.detection = 20;
+            this.detection = 15;
             bear.forcePatrol();
+            // Set cooldown so it doesn't immediately meet another bear or re-detect
+            bear.meetingCooldown = 8.0; 
             this.encounterCount = 1;
           }
+
         } else {
           this.isGameOver = true;
           msg = 'A Bear caught you!';
