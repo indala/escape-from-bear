@@ -197,9 +197,19 @@ export class Bear {
 
     if (result && result.length > 0) {
       this.path = result;
-    } else if (result === null && this.state === 'PATROL') {
-      this.pickNewWaypoint();
+    } else if (result && result.length === 0) {
+      // Already in the same tile — just move directly to target pixels
+      this.path = [target];
+    } else if (result === null) {
+      // If pathfinding fails, handle based on state
+      if (this.state === 'PATROL') {
+        this.pickNewWaypoint();
+      } else if (this.state === 'INVESTIGATE' || this.state === 'ALERT') {
+        this.endSearch();
+      }
     }
+
+
     // result===[] means already at target — onPathExhausted handles it
   }
 

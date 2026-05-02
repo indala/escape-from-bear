@@ -401,8 +401,10 @@ export class GameEngine {
 
         if (dist < coneLength && Math.abs(diff) < coneAngle / 2) {
           bearDetectionGain += 45 * dt;
-          bear.canSeePlayer = true; // Flashlight makes player visible even if bear was looking away
+          bear.canSeePlayer = true;
+          currentBearSense = 'VISION'; // Sight via flashlight beam counts as vision
           if (bear.state === 'PATROL' || bear.state === 'INVESTIGATE') {
+
 
             bear.setAlert(this.player.x, this.player.y);
             msg = "THE BEAR SEES YOUR LIGHT!";
@@ -469,8 +471,11 @@ export class GameEngine {
             // Set cooldown so it doesn't immediately meet another bear or re-detect
             bear.meetingCooldown = 8.0; 
             this.encounterCount = 1;
+          } else {
+            // Already sniffing — stay still to survive
+            msg = "The Bear is right next to you... stay absolutely still!";
+            bear.forcePatrol(); // keep encouraging it to move away
           }
-
         } else {
           this.isGameOver = true;
           msg = 'A Bear caught you!';
