@@ -356,7 +356,7 @@ export class GameEngine {
       this.player.triggerPickup();
       this.upgradeMsgTimer = 2.0; // Show upgrade message for 2s
     }
-    if (this.items.length > 0 && this.items.every(i => i.collected)) {
+    if (this.items.length > 0 && this.items.every(i => i.collected) && !this.exit.revealed) {
       this.exit.active = true;
       this.exit.revealed = true;
       // Trigger camera to reveal exit location
