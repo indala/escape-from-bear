@@ -27,7 +27,6 @@ export class Camera {
   private exitRevealTarget?: { x: number; y: number };
   private exitRevealTimer: number = 0;
   private exitRevealProgress: number = 0;
-  private exitRevealZoom: number = 1.0;
   private exitRevealOriginalPos?: { x: number; y: number };
 
   // Look-ahead: smoothly offset toward movement direction
@@ -58,9 +57,8 @@ export class Camera {
     // Store current camera position to return to
     this.exitRevealOriginalPos = { x: this.x, y: this.y };
     this.exitRevealTarget = { x: exitX, y: exitY };
-    this.exitRevealTimer = 3.0; // 3 second reveal animation
+    this.exitRevealTimer = 1.5; // 1.5 second reveal animation
     this.exitRevealProgress = 0;
-    this.exitRevealZoom = 1.2; // Zoom out slightly
   }
 
   /**
@@ -88,7 +86,7 @@ export class Camera {
     // Handle exit reveal animation
     if (this.exitRevealTimer > 0) {
       this.exitRevealTimer -= dt;
-      this.exitRevealProgress = 1 - (this.exitRevealTimer / 3.0); // 0 to 1 progress
+      this.exitRevealProgress = 1 - (this.exitRevealTimer / 1.5); // 0 to 1 progress
 
       if (this.exitRevealTarget && this.exitRevealOriginalPos) {
         // Calculate target position centered on exit
@@ -100,9 +98,8 @@ export class Camera {
         this.x = this.exitRevealOriginalPos.x * (1 - t) + targetCenterX * t;
         this.y = this.exitRevealOriginalPos.y * (1 - t) + targetCenterY * t;
 
-        // Apply zoom effect (slight zoom out)
-        const zoomT = Math.sin(t * Math.PI); // Ease in/out effect
-        const currentZoom = 1.0 + (this.exitRevealZoom - 1.0) * zoomT;
+        // Keep current zoom during reveal animation (no zoom out)
+        const currentZoom = this.isMobile ? 1.5 : 2.0;
 
         // Temporarily override zoom during exit reveal
         this.overrideZoom = currentZoom;

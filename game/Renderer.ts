@@ -229,6 +229,20 @@ export class Renderer {
     lctx.arc(ps.x, ps.y, ambientRadius, 0, Math.PI * 2);
     lctx.fill();
 
+    // Ambient light around active exit
+    if (engine.exit.active) {
+      const es = camera.toScreen(engine.exit.x, engine.exit.y);
+      const exitRadius = 150;
+      const exitGrad = lctx.createRadialGradient(es.x, es.y, 5, es.x, es.y, exitRadius);
+      exitGrad.addColorStop(0, 'rgba(255,255,255,1)');
+      exitGrad.addColorStop(0.3, 'rgba(255,255,255,0.7)');
+      exitGrad.addColorStop(1, 'rgba(255,255,255,0)');
+      lctx.fillStyle = exitGrad;
+      lctx.beginPath();
+      lctx.arc(es.x, es.y, exitRadius, 0, Math.PI * 2);
+      lctx.fill();
+    }
+
     // Directional flashlight cone (increases with items)
     if (isFlashlightOn) {
       const angle = player.facingAngle;
