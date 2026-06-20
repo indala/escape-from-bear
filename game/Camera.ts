@@ -10,22 +10,32 @@ export class Camera {
   // Mobile/Rotation state
   public isMobile: boolean = false;
   public currentRotation: number = 0;
+
+  // Zoom factor: 1.5 on mobile, 2.0 on PC for better visibility
+  get zoom(): number {
+    return this.isMobile ? 1.5 : 2.0;
+  }
   // Screen shake
   private shakeIntensity: number = 0;
   private shakeDuration:  number = 0;
   private shakeOffsetX:   number = 0;
   private shakeOffsetY:   number = 0;
 
+  // Exit reveal animation
+  private exitRevealTarget?: { x: number; y: number };
+  private exitRevealTimer: number = 0;
+  private exitRevealProgress: number = 0;
+  private exitRevealZoom: number = 1.0;
+  private exitRevealOriginalPos?: { x: number; y: number };
+
   // Look-ahead: smoothly offset toward movement direction
   private lookAheadX: number = 0;
   private lookAheadY: number = 0;
 
-  // Deadzone per axis (px) — camera only moves when player leaves this band
-  private readonly DEADZONE_X = 30;
-  private readonly DEADZONE_Y = 20;
 
-  // Look-ahead distance (px) — how far ahead the camera peeks
-  private readonly LOOK_AHEAD_DIST = 90;
+
+  // Look-ahead distance (px) — how far ahead the camera peeks (reduced to 35 to prevent eye strain)
+  private readonly LOOK_AHEAD_DIST = 35;
 
   // Look-ahead smoothing speed
   private readonly LOOK_AHEAD_SPEED = 3.5;
@@ -40,6 +50,15 @@ export class Camera {
   shake(intensity: number, duration: number) {
     this.shakeIntensity = intensity;
     this.shakeDuration  = duration;
+  }
+
+  revealExit(exitX: number, exitY: number) {
+    // Store current camera position to return to
+    this.exitRevealOriginalPos = { x: this.x, y: this.y };
+    this.exitRevealTarget = { x: exitX, y: exitY };
+    this.exitRevealTimer = 3.0; // 3 second reveal animation
+    this.exitRevealProgress = 0;
+    this.exitRevealZoom = 1.2; // Zoom out slightly
   }
 
   /**
@@ -60,24 +79,64 @@ export class Camera {
     velX: number = 0,
     velY: number = 0,
     isMoving: boolean = false,
-    mapWidth: number = 0,
-    mapHeight: number = 0,
+    _mapWidth: number = 0,
+    _mapHeight: number = 0,
     isFlashlightOn: boolean = false
   ) {
+    // Handle exit reveal animation
+    if (this.exitRevealTimer > 0) {
+      this.exitRevealTimer -= dt;
+      this.exitRevealProgress = 1 - (this.exitRevealTimer / 3.0); // 0 to 1 progress
+
+      if (this.exitRevealTarget && this.exitRevealOriginalPos) {
+        // Calculate target position centered on exit
+        const targetCenterX = this.exitRevealTarget.x - this.width / 2;
+        const targetCenterY = this.exitRevealTarget.y - this.height / 2;
+
+        // Interpolate between original position and exit position
+        const t = this.exitRevealProgress;
+        this.x = this.exitRevealOriginalPos.x * (1 - t) + targetCenterX * t;
+        this.y = this.exitRevealOriginalPos.y * (1 - t) + targetCenterY * t;
+
+        // Apply zoom effect (slight zoom out)
+        const zoomT = Math.sin(t * Math.PI); // Ease in/out effect
+        const currentZoom = 1.0 + (this.exitRevealZoom - 1.0) * zoomT;
+
+        // Temporarily override zoom during exit reveal
+        Object.defineProperty(this, 'zoom', {
+          value: currentZoom,
+          writable: true,
+          configurable: true
+        });
+
+        // When animation completes, return to normal camera behavior
+        if (this.exitRevealTimer <= 0) {
+          this.exitRevealTarget = undefined;
+          this.exitRevealOriginalPos = undefined;
+          // Restore original zoom
+          Object.defineProperty(this, 'zoom', {
+            get: function() { return this.isMobile ? 1.5 : 2.0; }
+          });
+        }
+
+        // Skip normal camera logic during reveal animation
+        return;
+      }
+    }
+
     // We no longer rotate the map on mobile to prevent motion sickness and improve UX
     this.currentRotation = 0;
 
-    // Mobile specific overrides for camera feel:
-    // - On mobile, we only use look-ahead when the flashlight is on to show the lit area
+    // Center view: no deadzone on both PC and Mobile to keep the player centered
+    const deadzoneX = 0;
+    const deadzoneY = 0;
+
+    // Use a smaller look-ahead distance to prevent eye strain
     const lookAheadDist = this.isMobile 
       ? (isFlashlightOn ? this.LOOK_AHEAD_DIST * 1.5 : 0) 
       : this.LOOK_AHEAD_DIST;
 
-    const deadzoneX     = this.isMobile ? 0 : this.DEADZONE_X;
-    const deadzoneY     = this.isMobile ? 0 : this.DEADZONE_Y;
-
     // 1. Calculate Look-ahead (smoothly offset toward movement or light direction)
-    // On mobile, if flashlight is on, we always offset even if not moving
     const isActive = isMoving || (this.isMobile && isFlashlightOn);
     const targetLookX = isActive ? velX * lookAheadDist : 0;
     const targetLookY = isActive ? velY * lookAheadDist : 0;
@@ -103,11 +162,7 @@ export class Camera {
       this.y += diffY * Math.min(1, speedY * dt);
     }
 
-    // 4. Clamp to map bounds (Desktop only - mobile stays centered even at edges)
-    if (!this.isMobile && mapWidth > 0 && mapHeight > 0) {
-      this.x = Math.max(0, Math.min(mapWidth  - this.width,  this.x));
-      this.y = Math.max(0, Math.min(mapHeight - this.height, this.y));
-    }
+    // No clamping to map bounds - camera always stays centered on the player (on both PC and Mobile)
 
     // ── Screen shake ──────────────────────────────────────────────────────────
     if (this.shakeDuration > 0) {
@@ -126,38 +181,53 @@ export class Camera {
     // 1. Move to screen center with shake offset
     ctx.translate(this.width / 2 + this.shakeOffsetX, this.height / 2 + this.shakeOffsetY);
     
-    // 2. Rotate (if any)
+    // 2. Apply scale (PC zoom)
+    const z = this.zoom;
+    if (z !== 1.0) {
+      ctx.scale(z, z);
+    }
+
+    // 3. Rotate (if any)
     if (this.currentRotation !== 0) {
       ctx.rotate(this.currentRotation);
     }
     
-    // 3. Move to world position (centering on the camera's current world center)
+    // 4. Move to world position (centering on the camera's current world center)
     ctx.translate(-(this.x + this.width / 2), -(this.y + this.height / 2));
   }
 
   toScreen(worldX: number, worldY: number): { x: number; y: number } {
+    const z = this.zoom;
+    const dx = worldX - (this.x + this.width / 2);
+    const dy = worldY - (this.y + this.height / 2);
+
     // If we have rotation, we need to apply it manually for coordinate conversion
     if (this.currentRotation !== 0) {
-      const dx = worldX - (this.x + this.width / 2);
-      const dy = worldY - (this.y + this.height / 2);
-      
       const cos = Math.cos(this.currentRotation);
       const sin = Math.sin(this.currentRotation);
       
-      const rx = dx * cos - dy * sin;
-      const ry = dx * sin + dy * cos;
+      const rx = (dx * cos - dy * sin) * z;
+      const ry = (dx * sin + dy * cos) * z;
       
       return {
-        x: rx + this.width / 2 + this.shakeOffsetX,
-        y: ry + this.height / 2 + this.shakeOffsetY
+        x: Math.round(rx + this.width / 2 + this.shakeOffsetX),
+        y: Math.round(ry + this.height / 2 + this.shakeOffsetY)
       };
     }
 
     // Default non-rotating screen conversion
     return {
-      x: worldX - Math.round(this.x + this.shakeOffsetX),
-      y: worldY - Math.round(this.y + this.shakeOffsetY),
+      x: Math.round(dx * z + this.width / 2 + this.shakeOffsetX),
+      y: Math.round(dy * z + this.height / 2 + this.shakeOffsetY),
     };
+  }
+
+  getExitRevealProgress(): number {
+    return this.exitRevealProgress;
+  }
+
+  getExitRevealTarget(): { x: number; y: number } | undefined {
+    return this.exitRevealTarget;
   }
 }
 

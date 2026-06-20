@@ -5,6 +5,7 @@ import { GameEngine } from '@/game/GameEngine';
 import { Renderer } from '@/game/Renderer';
 import { GameLoop } from '@/game/GameLoop';
 import { AudioManager } from '@/game/AudioManager';
+import { MiniMap } from './MiniMap';
 
 type BearState = 'PATROL' | 'ALERT' | 'INVESTIGATE' | 'CHASE' | 'MEETING';
 
@@ -32,6 +33,12 @@ export default function GameView() {
   const [bearState, setBearState] = useState<BearState>('PATROL');
   const [currentLevel, setCurrentLevel] = useState(1);
   const [difficultyLabel, setDifficultyLabel] = useState('EASY');
+  const [exitRevealed, setExitRevealed] = useState(false);
+  const [exitPosition, setExitPosition] = useState<{ x: number; y: number } | undefined>(undefined);
+  const [playerPosition, setPlayerPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [bears, setBears] = useState<{ x: number; y: number }[]>([]);
+  const [mapWidth, setMapWidth] = useState<number>(0);
+  const [mapHeight, setMapHeight] = useState<number>(0);
   const [isTouchDevice, setIsTouchDevice] = useState(false);
   const [joystickPos, setJoystickPos] = useState({ x: 0, y: 0 });
   const [joystickBase, setJoystickBase] = useState({ x: 0, y: 0 });
@@ -63,6 +70,11 @@ export default function GameView() {
     setDifficultyLabel('EASY');
     setCurrentLevel(level);
 
+    setPlayerPosition({ x: engine.player.x, y: engine.player.y });
+    setBears(engine.bears.map(b => ({ x: b.x, y: b.y })));
+    setMapWidth(engine.mapWidth);
+    setMapHeight(engine.mapHeight);
+
     engine.setUIListener((state) => {
       setDetection(state.detection);
       setIsGameOver(state.isGameOver);
@@ -75,6 +87,13 @@ export default function GameView() {
       setBearState(state.bearState as BearState);
       setCurrentLevel(state.currentLevel);
       setDifficultyLabel(state.difficultyLabel);
+      setExitRevealed(state.exitRevealed);
+      setExitPosition(state.exitPosition);
+
+      setPlayerPosition({ x: engine.player.x, y: engine.player.y });
+      setBears(engine.bears.map(b => ({ x: b.x, y: b.y })));
+      setMapWidth(engine.mapWidth);
+      setMapHeight(engine.mapHeight);
 
       if (state.itemsCollected > prevItemsRef.current) {
         audio.playPickup();
@@ -111,6 +130,7 @@ export default function GameView() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsTouchDevice('ontouchstart' in window || navigator.maxTouchPoints > 0);
     startGame(1);
 
@@ -171,15 +191,13 @@ export default function GameView() {
       const nx = dx / dist;
       const ny = dy / dist;
 
-      input.virtualX = nx * clampedNorm;
-      input.virtualY = ny * clampedNorm;
+      input.setVirtualPosition(nx * clampedNorm, ny * clampedNorm);
 
       // Thumb visual — clamped to radius
       const visualDist = Math.min(dist, JOYSTICK_RADIUS - 16);
       setJoystickPos({ x: nx * visualDist, y: ny * visualDist });
     } else {
-      input.virtualX = 0;
-      input.virtualY = 0;
+      input.setVirtualPosition(0, 0);
       setJoystickPos({ x: 0, y: 0 });
     }
   };
@@ -190,7 +208,7 @@ export default function GameView() {
     for (let i = 0; i < e.changedTouches.length; i++) {
       if (e.changedTouches[i].identifier === joystickTouchId.current) {
         const input = engineRef.current?.input;
-        if (input) { input.virtualX = 0; input.virtualY = 0; }
+        if (input) { input.setVirtualPosition(0, 0); }
         setJoystickPos({ x: 0, y: 0 });
         setIsJoystickActive(false);
         joystickTouchId.current = null;
@@ -335,8 +353,31 @@ export default function GameView() {
             }`}>
             {isMoving ? 'MOVE' : 'HIDE'}
           </div>
+          <div className="glass-panel px-3 py-2 rounded-xl">
+            <span className="text-[10px] uppercase tracking-widest text-white/40 font-bold">Hide</span>
+            <div className="text-yellow-400 font-black">
+              {engineRef.current?.player.hideCharges || 0} / {engineRef.current?.player.maxHideCharges || 2}
+            </div>
+          </div>
         </div>
       </div>
+
+      {/* Mini-map */}
+      {exitRevealed && exitPosition && (
+        <div className="absolute bottom-20 right-4 z-20">
+          <div className="glass-panel rounded-lg p-2">
+            <MiniMap
+              playerX={playerPosition.x}
+              playerY={playerPosition.y}
+              exitX={exitPosition.x}
+              exitY={exitPosition.y}
+              mapWidth={mapWidth}
+              mapHeight={mapHeight}
+              bears={bears}
+            />
+          </div>
+        </div>
+      )}
 
       {/* ── GAME OVER ── */}
       {isGameOver && (
@@ -466,6 +507,19 @@ export default function GameView() {
             >
               <span className="text-2xl">{isFlashlightOn ? '💡' : '🔦'}</span>
               <span className="text-[9px] font-black uppercase tracking-widest">[F] Light</span>
+            </button>
+
+            {/* Hide button */}
+            <button
+              className={`w-20 h-20 rounded-3xl border-2 flex flex-col items-center justify-center gap-1.5 active:scale-90 transition-all cursor-pointer ml-4 bg-cyan-500/25 border-cyan-500/60 text-cyan-500 shadow-[0_0_20px_rgba(6,182,212,0.3)]`}
+              onTouchStart={(e) => {
+                e.stopPropagation();
+                if (engineRef.current) engineRef.current.input.virtualHide = true;
+                if (navigator.vibrate) navigator.vibrate(15);
+              }}
+            >
+              <span className="text-2xl">👀</span>
+              <span className="text-[9px] font-black uppercase tracking-widest">[H] Hide</span>
             </button>
           </div>
         </div>

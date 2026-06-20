@@ -11,6 +11,13 @@ export class Player {
   // Visual feedback
   pickupFlash: number = 0; // countdown in seconds
 
+  // Hiding mechanics
+  isHiding: boolean = false;
+  hideCharges: number = 2;
+  maxHideCharges: number = 2;
+  hideTimer: number = 0; // Time remaining in hide state
+  hideCooldown: number = 0; // Cooldown after hiding
+
   update(dt: number, input: Input) {
     const vx = input.axisX;
     const vy = input.axisY;
@@ -29,6 +36,7 @@ export class Player {
     }
 
     if (this.pickupFlash > 0) this.pickupFlash -= dt;
+    this.updateHiding(dt);
   }
 
   /** Called by GameEngine after axis-separated collision to sync state */
@@ -41,10 +49,51 @@ export class Player {
       this.facingAngle = Math.atan2(vy / len, vx / len);
     }
     if (this.pickupFlash > 0) this.pickupFlash -= dt;
+    this.updateHiding(dt);
   }
 
   triggerPickup() {
     this.pickupFlash = 0.4;
+  }
+
+  // Hiding methods
+  startHiding() {
+    if (this.hideCharges > 0 && !this.isHiding && this.hideCooldown <= 0) {
+      this.isHiding = true;
+      this.hideCharges--;
+      this.hideTimer = 3.0; // Hide for 3 seconds
+      return true;
+    }
+    return false;
+  }
+
+  stopHiding() {
+    this.isHiding = false;
+    this.hideCooldown = 2.0; // 2 second cooldown after hiding
+  }
+
+  updateHiding(dt: number) {
+    if (this.isHiding) {
+      this.hideTimer -= dt;
+      if (this.hideTimer <= 0) {
+        this.stopHiding();
+      }
+    } else if (this.hideCooldown > 0) {
+      this.hideCooldown -= dt;
+    }
+  }
+
+  addHideCharge() {
+    if (this.hideCharges < this.maxHideCharges) {
+      this.hideCharges++;
+      return true;
+    }
+    return false;
+  }
+
+  setMaxHideCharges(charges: number) {
+    this.maxHideCharges = Math.max(2, charges); // Minimum 2 charges
+    this.hideCharges = Math.min(this.hideCharges, this.maxHideCharges);
   }
 
   draw(ctx: CanvasRenderingContext2D) {

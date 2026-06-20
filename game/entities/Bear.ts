@@ -31,6 +31,7 @@ const WAYPOINT_REACH_DIST = 28;   // px — how close to a patrol waypoint count
 
 // ── Bear entity ──────────────────────────────────────────────────────────────
 export class Bear {
+  id: number = 0;
   x: number = 600;
   y: number = 380;
   radius: number = 16;
@@ -47,8 +48,10 @@ export class Bear {
   alertTimer: number = 0;
   meetingTimer: number = 0;
   meetingCooldown: number = 0;
+  ignorePlayerTimer: number = 0;
   private searchPointsCount: number = 0;
   public lastKnownPlayerPos: { x: number; y: number } | null = null;
+  public lastKnownPlayerAngle: number | null = null;
   public canSeePlayer: boolean = false;
 
 
@@ -66,8 +69,10 @@ export class Bear {
 
   private scanTimer: number = 0;
   private scanDir: number = 1;
+  private pivotTimer: number = 0; // Timer for pivot delay when changing direction
 
-  constructor(levelData: LevelData, map: number[][]) {
+  constructor(levelData: LevelData, map: number[][], id: number = 0) {
+    this.id = id;
     this.map = map;
     this.visionRange = levelData.visionRange;
     this.visionAngle = levelData.visionAngle;
@@ -105,6 +110,7 @@ export class Bear {
     const nowMs = performance.now();
 
     if (this.meetingCooldown > 0) this.meetingCooldown -= dt;
+    if (this.ignorePlayerTimer > 0) this.ignorePlayerTimer -= dt;
 
     if (this.state === 'MEETING') {
       this.meetingTimer -= dt;
@@ -139,9 +145,14 @@ export class Bear {
 
     this.tickAlertTimer(dt);
 
-    // Update last known position if player is visible
-    if (this.canSeePlayer) {
+    // Update last known position if player is visible or heard
+    const distToPlayer = Math.hypot(player.x - this.x, player.y - this.y);
+    const isHeard = player.isMoving && distToPlayer < this.hearingRange;
+    if (this.canSeePlayer || isHeard) {
       this.lastKnownPlayerPos = { x: player.x, y: player.y };
+      if (player.isMoving) {
+        this.lastKnownPlayerAngle = player.facingAngle;
+      }
     }
   }
 
@@ -164,8 +175,8 @@ export class Bear {
     this.scanTimer = 0;     // cancel any scan
   }
 
-  setInvestigate(targetX: number, targetY: number) {
-    if (this.state === 'CHASE') return;
+  setInvestigate(targetX: number, targetY: number, forceFromChase: boolean = false) {
+    if (this.state === 'CHASE' && !forceFromChase) return;
     this.state = 'INVESTIGATE';
     this.alertTarget = { x: targetX, y: targetY };
     this.alertTimer = INVESTIGATE_TIMEOUT;
@@ -206,7 +217,10 @@ export class Bear {
       // If pathfinding fails, handle based on state
       if (this.state === 'PATROL') {
         this.pickNewWaypoint();
-      } else if (this.state === 'INVESTIGATE' || this.state === 'ALERT' || this.state === 'CHASE') {
+      } else if (this.state === 'CHASE') {
+        // In chase, do NOT give up immediately. Move directly toward the player's last known direction and retry later.
+        this.path = [target];
+      } else if (this.state === 'INVESTIGATE' || this.state === 'ALERT') {
         this.endSearch();
       }
     }
@@ -218,27 +232,51 @@ export class Bear {
 
   private currentTarget(player: Player): { x: number; y: number } {
     if (this.state === 'CHASE') {
-      let tx = player.x;
-      let ty = player.y;
+      const distToPlayer = Math.hypot(player.x - this.x, player.y - this.y);
+      const isHeard = player.isMoving && distToPlayer < this.hearingRange;
+      const activeTracking = this.canSeePlayer || isHeard;
 
-      // ── SMART: Anticipation (Lead the target) ─────────────────────────────
-      // If player is moving, aim slightly ahead based on their speed
-      if (player.isMoving) {
-        const leadTime = 0.45; // seconds to look ahead
-        tx += Math.cos(player.facingAngle) * player.speed * leadTime;
-        ty += Math.sin(player.facingAngle) * player.speed * leadTime;
+      if (activeTracking) {
+        let tx = player.x;
+        let ty = player.y;
 
-        // Don't lead into walls (simple bounds check)
-        const mx = Math.floor(tx / TILE_SIZE);
-        const my = Math.floor(ty / TILE_SIZE);
-        if (!this.map[my] || this.map[my][mx] !== 0) {
-          tx = player.x; // Fallback to current pos if prediction is in a wall
-          ty = player.y;
+        // ── SMART: Anticipation (Lead the target) ─────────────────────────────
+        // If player is moving, aim slightly ahead based on their speed and role
+        if (player.isMoving) {
+          let leadTime = 0.45;
+          let flankOffset = 0;
+          const flankSide = (this.id % 2 === 0) ? 1 : -1;
+
+          if (this.id === 0) {
+            leadTime = 0.15; // Direct stalker
+          } else if (this.id === 1) {
+            leadTime = 0.80; // Aggressive interceptor
+          } else {
+            leadTime = 0.45;
+            flankOffset = 80; // Flanker
+          }
+
+          tx += Math.cos(player.facingAngle) * player.speed * leadTime;
+          ty += Math.sin(player.facingAngle) * player.speed * leadTime;
+
+          if (flankOffset > 0) {
+            tx += Math.cos(player.facingAngle + (Math.PI / 2) * flankSide) * flankOffset;
+            ty += Math.sin(player.facingAngle + (Math.PI / 2) * flankSide) * flankOffset;
+          }
+
+          // Don't lead into walls (simple bounds check)
+          const mx = Math.floor(tx / TILE_SIZE);
+          const my = Math.floor(ty / TILE_SIZE);
+          if (!this.map[my] || this.map[my][mx] !== 0) {
+            tx = player.x; // Fallback to current pos if prediction is in a wall
+            ty = player.y;
+          }
         }
+        return { x: tx, y: ty };
       }
 
-      if (this.canSeePlayer) return { x: tx, y: ty };
-      return this.lastKnownPlayerPos || { x: tx, y: ty };
+      // Use last known position if available when player is out of sight/hearing
+      return this.lastKnownPlayerPos || { x: player.x, y: player.y };
     }
     if ((this.state === 'ALERT' || this.state === 'INVESTIGATE') && this.alertTarget) {
       return this.alertTarget;
@@ -286,6 +324,9 @@ export class Bear {
       } else {
         this.path.shift();
       }
+      if (this.path.length === 0) {
+        this.onPathExhausted();
+      }
       return;
     }
 
@@ -312,7 +353,23 @@ export class Bear {
       CHASE: chaseMult,
       MEETING: 0,
     };
-    const spd = BEAR_SPEED_BASE * multByState[this.state] * this.speedMult;
+
+    // Check for nearby obstacles and apply penalty
+    const obstaclePenalty = this.checkNearbyObstacles() ? 0.85 : 1.0;
+    const spd = BEAR_SPEED_BASE * multByState[this.state] * this.speedMult * obstaclePenalty;
+
+    // Add pivot delay when changing direction significantly
+    if (this.pivotTimer > 0) {
+      this.pivotTimer -= dt;
+      return; // Skip movement during pivot
+    }
+
+    // Check if we need to pivot (significant direction change)
+    if (Math.abs(diff) > Math.PI / 4 && this.state !== 'MEETING') { // More than 45 degree turn
+      const delay = this.state === 'CHASE' ? 0.08 : 0.3; // 80ms for chase (simulates momentum shift), 300ms for other states
+      this.pivotTimer = delay;
+      return; // Skip movement this frame
+    }
 
     // Move in exact direction of path node (avoids wall hugging from direction drift)
     this.x += Math.cos(targetAngle) * spd * dt;
@@ -341,26 +398,46 @@ export class Bear {
 
       case 'INVESTIGATE':
         if (this.searchPointsCount < 2) {
-          // Pick a random spot nearby to continue searching
-          const angle = Math.random() * Math.PI * 2;
-          const dist = 80 + Math.random() * 100;
-          const tx = this.x + Math.cos(angle) * dist;
-          const ty = this.y + Math.sin(angle) * dist;
+          // Try up to 5 times to find a walkable nearby spot
+          let foundSpot = false;
+          for (let attempt = 0; attempt < 5; attempt++) {
+            let angle: number;
+            if (this.lastKnownPlayerAngle !== null) {
+              // Bias search angle towards the player's last moving direction if known
+              angle = this.lastKnownPlayerAngle + (Math.random() - 0.5) * 2.0;
+            } else {
+              angle = Math.random() * Math.PI * 2;
+            }
 
-          // Verify if walkable (simple grid check)
-          const mx = Math.floor(tx / TILE_SIZE);
-          const my = Math.floor(ty / TILE_SIZE);
-          if (this.map[my] && this.map[my][mx] === 0) {
-            this.alertTarget = { x: tx, y: ty };
-            this.searchPointsCount++;
-            this.path = [];
-            this.lastPathRefreshMs = 0;
-            this.scanTimer = SCAN_DURATION_ALERT; // brief look before moving to next search spot
-          } else {
+            const dist = 80 + Math.random() * 100;
+            const tx = this.x + Math.cos(angle) * dist;
+            const ty = this.y + Math.sin(angle) * dist;
+
+            // Verify if walkable (simple grid check)
+            const mx = Math.floor(tx / TILE_SIZE);
+            const my = Math.floor(ty / TILE_SIZE);
+            if (this.map[my] && this.map[my][mx] === 0) {
+              this.alertTarget = { x: tx, y: ty };
+              this.searchPointsCount++;
+              this.path = [];
+              this.lastPathRefreshMs = 0;
+              this.scanTimer = SCAN_DURATION_ALERT; // brief look before moving to next search spot
+              foundSpot = true;
+              break;
+            }
+          }
+          if (!foundSpot) {
             this.endSearch();
           }
         } else {
-          this.endSearch();
+          // We reached the last search spot. Do a thorough scan before going back to patrol
+          if (this.searchPointsCount === 2) {
+            this.scanTimer = 1.5; // Thorough scan duration
+            this.scanDir = Math.random() < 0.5 ? 1 : -1;
+            this.searchPointsCount++; // Make it 3 so next time we end search
+          } else {
+            this.endSearch();
+          }
         }
         break;
 
@@ -368,7 +445,7 @@ export class Bear {
       case 'CHASE':
         if (!this.canSeePlayer && this.lastKnownPlayerPos) {
           // Reached last known pos but player is gone — start searching
-          this.setInvestigate(this.x, this.y);
+          this.setInvestigate(this.x, this.y, true);
         }
         break;
 
@@ -389,7 +466,42 @@ export class Bear {
     this.state = 'PATROL';
     this.alertTarget = null;
     this.searchPointsCount = 0;
+    this.lastKnownPlayerAngle = null;
     this.pickNewWaypoint();
+  }
+
+  private checkNearbyObstacles(): boolean {
+    // Check if there are walls or obstacles within 2 tiles around the bear
+    const mx = Math.floor(this.x / TILE_SIZE);
+    const my = Math.floor(this.y / TILE_SIZE);
+
+    // Check 5x5 area around bear (2 tiles in each direction)
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
+        const checkX = mx + dx;
+        const checkY = my + dy;
+
+        // Check bounds
+        if (checkX < 0 || checkX >= this.map[0].length || checkY < 0 || checkY >= this.map.length) {
+          continue;
+        }
+
+        // Check if it's a wall (non-zero tile)
+        if (this.map[checkY][checkX] !== 0) {
+          // Calculate distance from bear to this wall
+          const wallX = checkX * TILE_SIZE + TILE_SIZE / 2;
+          const wallY = checkY * TILE_SIZE + TILE_SIZE / 2;
+          const dist = Math.hypot(this.x - wallX, this.y - wallY);
+
+          // If wall is within 2 tile radii (about 2*TILE_SIZE), consider it nearby
+          if (dist < TILE_SIZE * 2) {
+            return true;
+          }
+        }
+      }
+    }
+
+    return false;
   }
 
   public pickNewWaypoint() {
@@ -485,6 +597,11 @@ export class Bear {
 
   // ── Detection check (called from GameEngine) ─────────────────────────────────
   checkDetection(player: Player): boolean {
+    if (this.ignorePlayerTimer > 0) return false;
+
+    // Player is hiding - bears cannot detect them
+    if (player.isHiding) return false;
+
     const dx = player.x - this.x;
     const dy = player.y - this.y;
     const dist = Math.hypot(dx, dy);

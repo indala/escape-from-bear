@@ -215,7 +215,7 @@ export class Renderer {
 
     // Ambient light around player (increases with items)
     const itemsCollected = engine.items.filter(i => i.collected).length;
-    const ambientBase = 80;
+    const ambientBase = 180;
     const ambientBonus = itemsCollected * 15;
 
     const ambientRadius = ambientBase + ambientBonus;
@@ -260,9 +260,9 @@ export class Renderer {
       this.ctx.save();
       this.ctx.globalCompositeOperation = 'screen';
       const glowGrad = this.ctx.createRadialGradient(ps.x, ps.y, 10, ps.x, ps.y, coneLength);
-      glowGrad.addColorStop(0, 'rgba(255, 245, 180, 0.15)');
-      glowGrad.addColorStop(0.4, 'rgba(255, 245, 180, 0.05)');
-      glowGrad.addColorStop(1, 'rgba(255, 245, 180, 0)');
+      glowGrad.addColorStop(0, 'rgba(255, 255, 255, 0.35)');
+      glowGrad.addColorStop(0.4, 'rgba(255, 255, 255, 0.15)');
+      glowGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
       
       this.ctx.fillStyle = glowGrad;
       this.ctx.beginPath();

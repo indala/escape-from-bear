@@ -1,9 +1,14 @@
 import { TILE_SIZE } from '../map/MapData';
 
 export class VisibilitySystem {
+  // Cache for raycast results to avoid redundant calculations
+  private static raycastCache: Map<string, number> = new Map();
+  private static readonly CACHE_SIZE = 1000;
+
   /**
    * Casts a single ray and returns the distance to the first wall hit.
    * Uses the DDA (Digital Differential Analyzer) algorithm for grid-accurate checks.
+   * Includes caching to avoid redundant calculations.
    */
   static raycast(
     startX: number,
@@ -12,6 +17,14 @@ export class VisibilitySystem {
     range: number,
     map: number[][]
   ): number {
+    // Create cache key
+    const key = `${startX.toFixed(2)}|${startY.toFixed(2)}|${angle.toFixed(4)}|${range.toFixed(2)}`;
+    
+    // Check cache first
+    if (this.raycastCache.has(key)) {
+      return this.raycastCache.get(key)!;
+    }
+    
     const cos = Math.cos(angle);
     const sin = Math.sin(angle);
 
@@ -65,7 +78,11 @@ export class VisibilitySystem {
       }
 
       const worldDist = dist * TILE_SIZE;
-      if (worldDist > range) return range;
+      if (worldDist > range) {
+        const result = range;
+        this.cacheResult(key, result);
+        return result;
+      }
 
       // Check for wall
       if (
@@ -75,13 +92,29 @@ export class VisibilitySystem {
         mapX >= map[0].length ||
         map[mapY][mapX] === 1
       ) {
-        return worldDist;
+        const result = worldDist;
+        this.cacheResult(key, result);
+        return result;
       }
 
       iterations++;
     }
 
-    return range;
+    const result = range;
+    this.cacheResult(key, result);
+    return result;
+  }
+  
+  private static cacheResult(key: string, result: number): void {
+    // Simple cache management - clear cache if it gets too large
+    if (this.raycastCache.size > this.CACHE_SIZE) {
+      this.raycastCache.clear();
+    }
+    this.raycastCache.set(key, result);
+  }
+  
+  static clearCache(): void {
+    this.raycastCache.clear();
   }
 
   /**

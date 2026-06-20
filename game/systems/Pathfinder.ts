@@ -84,12 +84,22 @@ const DIRS = [
   { x:  0, y:  1, cost: 1 },
   { x: -1, y:  0, cost: 1 },
   { x:  1, y:  0, cost: 1 },
+  // Diagonals (Cost is √2 ≈ 1.414)
+  { x: -1, y: -1, cost: 1.414 },
+  { x:  1, y: -1, cost: 1.414 },
+  { x: -1, y:  1, cost: 1.414 },
+  { x:  1, y:  1, cost: 1.414 },
 ];
+
 
 // ─── Octile heuristic (works for cardinal-only movement too) ──────────────────
 function heuristic(ax: number, ay: number, bx: number, by: number): number {
-  return Math.abs(ax - bx) + Math.abs(ay - by); // Manhattan for 4-dir
+  const dx = Math.abs(ax - bx);
+  const dy = Math.abs(ay - by);
+  // Octile distance: 1 * (dx + dy) + (√2 - 2 * 1) * min(dx, dy)
+  return (dx + dy) + (1.414 - 2) * Math.min(dx, dy);
 }
+
 
 // ─── Main A* Pathfinder ───────────────────────────────────────────────────────
 export class Pathfinder {
@@ -154,7 +164,16 @@ export class Pathfinder {
         const ny = cur.y + d.y;
         if (!isWalkable(nx, ny)) continue;
 
+        // ── NEW: Corner cutting prevention ──────────────────────────────────
+        // If moving diagonally, both adjacent cardinal tiles must be walkable
+        if (d.x !== 0 && d.y !== 0) {
+          if (!isWalkable(nx, cur.y) || !isWalkable(cur.x, ny)) {
+            continue;
+          }
+        }
+
         const nIdx = ny * mapCols + nx;
+
         if (closed[nIdx]) continue;
 
         const g = cur.g + d.cost;
@@ -179,10 +198,11 @@ export class Pathfinder {
     
     const visited = new Uint8Array(mapRows * mapCols);
     const queue: [number, number][] = [[startX, startY]];
+    let front = 0;
     visited[startY * mapCols + startX] = 1;
 
-    while (queue.length > 0) {
-      const [cx, cy] = queue.shift()!;
+    while (front < queue.length) {
+      const [cx, cy] = queue[front++];
       if (isWalkable(cx, cy)) return { x: cx, y: cy };
       
       for (const d of DIRS) {

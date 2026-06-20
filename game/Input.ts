@@ -3,7 +3,13 @@ export class Input {
   public virtualX: number = 0;
   public virtualY: number = 0;
   public virtualFlashlight: boolean = false;
+  public virtualHide: boolean = false;
   private justPressedKeys: Set<string> = new Set();
+
+  setVirtualPosition(x: number, y: number) {
+    this.virtualX = x;
+    this.virtualY = y;
+  }
 
   private onKeyDown: (e: KeyboardEvent) => void;
   private onKeyUp:   (e: KeyboardEvent) => void;
@@ -34,6 +40,12 @@ export class Input {
     // Virtual flashlight button (mobile)
     if (k === 'f' && this.virtualFlashlight) {
       this.virtualFlashlight = false;
+      return true;
+    }
+
+    // Virtual hide button (mobile)
+    if (k === 'h' && this.virtualHide) {
+      this.virtualHide = false;
       return true;
     }
 

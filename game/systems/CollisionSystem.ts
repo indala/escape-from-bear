@@ -7,8 +7,7 @@ export class CollisionSystem {
    * Samples at center and ±40% radius vertically to catch corners.
    */
   static resolveX(x: number, y: number, radius: number, map: number[][]): number {
-    const cols = map[0].length;
-    let nx = Math.max(radius, Math.min(cols * TILE_SIZE - radius, x));
+    let nx = x;
 
     for (const yo of [-radius * 0.4, 0, radius * 0.4]) {
       const ty = Math.floor((y + yo) / TILE_SIZE);
@@ -32,8 +31,7 @@ export class CollisionSystem {
    * Samples at center and ±40% radius horizontally to catch corners.
    */
   static resolveY(x: number, y: number, radius: number, map: number[][]): number {
-    const rows = map.length;
-    let ny = Math.max(radius, Math.min(rows * TILE_SIZE - radius, y));
+    let ny = y;
 
     for (const xo of [-radius * 0.4, 0, radius * 0.4]) {
       const tx = Math.floor((x + xo) / TILE_SIZE);
@@ -55,7 +53,7 @@ export class CollisionSystem {
   /** Full resolve — kept for bear (doesn't need sliding) */
   static resolve(x: number, y: number, radius: number, map: number[][]): { x: number; y: number } {
     const nx = this.resolveX(x, y, radius, map);
-    const ny = this.resolveY(nx, y, radius, map);
+    const ny = this.resolveY(x, y, radius, map);
     return { x: nx, y: ny };
   }
 
