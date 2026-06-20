@@ -11,9 +11,11 @@ export class Camera {
   public isMobile: boolean = false;
   public currentRotation: number = 0;
 
+  private overrideZoom: number | null = null;
+
   // Zoom factor: 1.5 on mobile, 2.0 on PC for better visibility
   get zoom(): number {
-    return this.isMobile ? 1.5 : 2.0;
+    return this.overrideZoom !== null ? this.overrideZoom : (this.isMobile ? 1.5 : 2.0);
   }
   // Screen shake
   private shakeIntensity: number = 0;
@@ -103,20 +105,14 @@ export class Camera {
         const currentZoom = 1.0 + (this.exitRevealZoom - 1.0) * zoomT;
 
         // Temporarily override zoom during exit reveal
-        Object.defineProperty(this, 'zoom', {
-          value: currentZoom,
-          writable: true,
-          configurable: true
-        });
+        this.overrideZoom = currentZoom;
 
         // When animation completes, return to normal camera behavior
         if (this.exitRevealTimer <= 0) {
           this.exitRevealTarget = undefined;
           this.exitRevealOriginalPos = undefined;
           // Restore original zoom
-          Object.defineProperty(this, 'zoom', {
-            get: function() { return this.isMobile ? 1.5 : 2.0; }
-          });
+          this.overrideZoom = null;
         }
 
         // Skip normal camera logic during reveal animation
