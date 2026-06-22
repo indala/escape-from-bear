@@ -150,23 +150,7 @@ export class Renderer {
   }
 
   private drawExit(exit: { x: number; y: number; active: boolean }) {
-    if (!exit.active) {
-      // Draw inactive exit as a faint marker
-      this.ctx.save();
-      this.ctx.strokeStyle = 'rgba(255,255,255,0.05)';
-      this.ctx.lineWidth = 1;
-      this.ctx.setLineDash([3, 6]);
-      this.ctx.beginPath();
-      this.ctx.arc(exit.x, exit.y, 22, 0, Math.PI * 2);
-      this.ctx.stroke();
-      this.ctx.setLineDash([]);
-      this.ctx.fillStyle = 'rgba(255,255,255,0.06)';
-      this.ctx.font = 'bold 7px monospace';
-      this.ctx.textAlign = 'center';
-      this.ctx.fillText('EXIT', exit.x, exit.y + 3);
-      this.ctx.restore();
-      return;
-    }
+    if (!exit.active) return;
 
     const t = performance.now() / 1000;
     const pulse = Math.sin(t * 4) * 0.25 + 0.75;
